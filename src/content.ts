@@ -842,6 +842,15 @@ function showCountdown(totalSeconds: number) {
     browser.runtime.sendMessage({ action: "openPopup" });
   });
 
+  // Double-click to hide for 1 minute
+  countdown.addEventListener("dblclick", (e) => {
+    e.stopPropagation();
+    countdown.style.display = "none";
+    setTimeout(() => {
+      countdown.style.display = "block";
+    }, 60000); // 1 minute
+  });
+
   const timeDisplay = countdown.querySelector(".countdown-time");
   const todayTimeDisplay = countdown.querySelector(".countdown-today");
   let remaining = totalSeconds;
@@ -931,3 +940,139 @@ async function checkExistingLimit() {
 }
 
 checkExistingLimit();
+
+// Check if this is a productive site and show count-up timer
+async function checkProductiveSite() {
+  const hostname = window.location.hostname;
+  const result = await browser.storage.local.get("productiveSites");
+  const productiveSites = result.productiveSites || [];
+  
+  const isProductive = productiveSites.some((site: string) => 
+    hostname.includes(site) || site.includes(hostname)
+  );
+  
+  if (isProductive) {
+    showProductiveTimer();
+  }
+}
+
+function showProductiveTimer() {
+  const timer = document.createElement("div");
+  timer.id = "productive-timer";
+  timer.innerHTML = `
+    <div class="timer-content">
+      <span class="timer-time"></span>
+      <span class="timer-label">Earning</span>
+    </div>
+  `;
+
+  const style = document.createElement("style");
+  style.textContent = `
+    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500&display=swap');
+    
+    #productive-timer {
+      position: fixed;
+      top: 12px;
+      right: 12px;
+      background: rgba(18, 18, 26, 0.85);
+      padding: 6px 10px;
+      z-index: 999998;
+      font-family: 'JetBrains Mono', monospace;
+      border: 1px solid rgba(0, 255, 136, 0.3);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+      backdrop-filter: blur(8px);
+      border-radius: 3px;
+      transition: all 200ms ease;
+      opacity: 0.7;
+      cursor: pointer;
+    }
+    
+    #productive-timer:hover {
+      opacity: 1;
+      border-color: rgba(0, 255, 136, 0.6);
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+    }
+    
+    .timer-content {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      font-size: 11px;
+    }
+    
+    .timer-time {
+      color: #00ff88;
+      font-weight: 500;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: 0.02em;
+    }
+    
+    .timer-label {
+      color: #6b7280;
+      font-size: 10px;
+      font-weight: 500;
+    }
+    
+    .timer-label::before {
+      content: '·';
+      margin-right: 6px;
+      color: #2a2a3a;
+    }
+  `;
+
+  document.head.appendChild(style);
+  document.body.appendChild(timer);
+
+  // Make timer clickable to open popup
+  timer.addEventListener("click", () => {
+    browser.runtime.sendMessage({ action: "openPopup" });
+  });
+
+  // Double-click to hide for 1 minute
+  timer.addEventListener("dblclick", (e) => {
+    e.stopPropagation();
+    timer.style.display = "none";
+    setTimeout(() => {
+      timer.style.display = "block";
+    }, 60000); // 1 minute
+  });
+
+  const timeDisplay = timer.querySelector(".timer-time");
+  let elapsed = 0;
+
+  // Get initial time from storage
+  async function getInitialTime() {
+    const hostname = window.location.hostname;
+    const result = await browser.storage.local.get("timeTracking");
+    const timeTracking = result.timeTracking || {};
+    
+    if (timeTracking[hostname]) {
+      elapsed = timeTracking[hostname].timeSpent;
+    }
+  }
+
+  getInitialTime();
+
+  // Update timer every second
+  setInterval(() => {
+    elapsed++;
+    
+    const hours = Math.floor(elapsed / 3600);
+    const minutes = Math.floor((elapsed % 3600) / 60);
+    const seconds = elapsed % 60;
+    
+    let timeStr = "";
+    if (hours > 0) {
+      timeStr = `${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+    } else {
+      timeStr = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+    }
+    
+    if (timeDisplay) {
+      timeDisplay.textContent = timeStr;
+    }
+  }, 1000);
+}
+
+checkProductiveSite();
