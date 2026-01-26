@@ -1,4 +1,7 @@
 {
+  "name": "Tab Time Tracker",
+  "description": "Track time spent on each website",
+  "version": "1.0.0",
   "{{chrome}}.manifest_version": 3,
   "{{firefox}}.manifest_version": 2,
   "icons": {
@@ -14,8 +17,18 @@
   "{{firefox}}.browser_action": {
     "default_popup": "src/popup.html"
   },
-  "background": {
-    "{{chrome}}.service_worker": "src/background.ts",
-    "{{firefox}}.scripts": ["src/background.ts"]
-  }
+  "permissions": ["tabs", "storage"],
+  "{{chrome}}.background": {
+    "service_worker": "src/background.ts"
+  },
+  "{{firefox}}.background": {
+    "scripts": ["src/background.ts"]
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["src/content.ts"],
+      "run_at": "document_end"
+    }
+  ]
 }

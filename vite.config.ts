@@ -19,6 +19,7 @@ export default defineConfig({
     react(),
     webExtension({
       manifest: generateManifest,
+      browser: process.env.TARGET_BROWSER || "chrome",
     }),
   ],
 });
