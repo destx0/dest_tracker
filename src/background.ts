@@ -1,4 +1,5 @@
 import browser from "webextension-polyfill";
+import { initializeSync, syncToRemote } from "./services/syncService";
 
 interface TabTimeData {
   url: string;
@@ -32,6 +33,21 @@ interface WeeklyHistory {
   [date: string]: DailyHistory;
 }
 
+interface SiteAccessLog {
+  [hostname: string]: {
+    lastAccessed: number; // timestamp
+    accessCount: number;
+  };
+}
+
+interface DailyBalance {
+  date: string;
+  earned: number; // from productive time
+  spent: number; // on distracting time
+  bonus: number; // daily starting bonus (900 seconds = 15 min)
+  total: number; // earned + bonus - spent
+}
+
 let currentTabId: number | null = null;
 let startTime: number = Date.now();
 
@@ -44,8 +60,20 @@ const DEFAULT_LIMITED_SITES = [
   "x.com",
   "tiktok.com",
   "reddit.com",
-  "netflix.com"
+  "netflix.com",
+  "amazon.in"
 ];
+
+// Special blocked sites with cooldown
+const SPECIAL_BLOCKED_SITES = {
+  "amazon.in": {
+    cooldownDays: 2,
+    message: "Amazon is blocked for 2 days after each visit"
+  }
+};
+
+const DAILY_BONUS_SECONDS = 900; // 15 minutes
+const BALANCE_RATIO = 0.5; // 1 min productive = 0.5 min distracting
 
 // Default productive sites
 const DEFAULT_PRODUCTIVE_SITES = [
@@ -137,6 +165,9 @@ browser.runtime.onStartup.addListener(async () => {
     currentTabId = tabs[0].id || null;
     startTime = Date.now();
   }
+  
+  // Initialize Firebase sync
+  await initializeSync();
 });
 
 // Initialize on install
@@ -155,10 +186,123 @@ browser.runtime.onInstalled.addListener(async () => {
   if (!result.productiveSites) {
     await browser.storage.local.set({ productiveSites: DEFAULT_PRODUCTIVE_SITES });
   }
+  
+  // Initialize Firebase sync
+  await initializeSync();
 });
 
 // Update time periodically (every 10 seconds)
 setInterval(updateCurrentTabTime, 10000);
+
+// Sync to Firebase every 30 seconds
+setInterval(syncToRemote, 30000);
+
+// Check balance and update daily bonus
+async function checkAndUpdateDailyBalance() {
+  const today = new Date().toISOString().split('T')[0];
+  const result = await browser.storage.local.get(["dailyBalance", "timeTracking", "productiveSites", "limitedSites"]);
+  
+  const dailyBalance: DailyBalance = result.dailyBalance || {
+    date: today,
+    earned: 0,
+    spent: 0,
+    bonus: DAILY_BONUS_SECONDS,
+    total: DAILY_BONUS_SECONDS
+  };
+  
+  // Reset if new day
+  if (dailyBalance.date !== today) {
+    dailyBalance.date = today;
+    dailyBalance.earned = 0;
+    dailyBalance.spent = 0;
+    dailyBalance.bonus = DAILY_BONUS_SECONDS;
+    dailyBalance.total = DAILY_BONUS_SECONDS;
+  }
+  
+  // Calculate earned and spent from today's tracking
+  const timeTracking = result.timeTracking || {};
+  const productiveSites = result.productiveSites || DEFAULT_PRODUCTIVE_SITES;
+  const limitedSites = result.limitedSites || DEFAULT_LIMITED_SITES;
+  
+  let productiveTime = 0;
+  let distractingTime = 0;
+  
+  for (const item of Object.values(timeTracking) as TabTimeData[]) {
+    if (productiveSites.some((site: string) => item.url.includes(site))) {
+      productiveTime += item.timeSpent;
+    }
+    if (limitedSites.some((site: string) => item.url.includes(site))) {
+      distractingTime += item.timeSpent;
+    }
+  }
+  
+  dailyBalance.earned = Math.floor(productiveTime * BALANCE_RATIO);
+  dailyBalance.spent = distractingTime;
+  dailyBalance.total = dailyBalance.bonus + dailyBalance.earned - dailyBalance.spent;
+  
+  await browser.storage.local.set({ dailyBalance });
+  return dailyBalance;
+}
+
+// Check if site can be accessed
+async function canAccessSite(hostname: string): Promise<{ allowed: boolean; reason?: string; cooldownEnd?: number }> {
+  const result = await browser.storage.local.get(["siteAccessLog", "dailyBalance", "limitedSites"]);
+  const siteAccessLog: SiteAccessLog = result.siteAccessLog || {};
+  const limitedSites = result.limitedSites || DEFAULT_LIMITED_SITES;
+  
+  // Check if it's a limited site
+  const isLimited = limitedSites.some((site: string) => hostname.includes(site) || site.includes(hostname));
+  
+  if (!isLimited) {
+    return { allowed: true };
+  }
+  
+  // Check special blocked sites (like Amazon)
+  for (const [blockedSite, config] of Object.entries(SPECIAL_BLOCKED_SITES)) {
+    if (hostname.includes(blockedSite)) {
+      const lastAccess = siteAccessLog[blockedSite]?.lastAccessed || 0;
+      const cooldownMs = config.cooldownDays * 24 * 60 * 60 * 1000;
+      const cooldownEnd = lastAccess + cooldownMs;
+      
+      if (Date.now() < cooldownEnd) {
+        return { 
+          allowed: false, 
+          reason: config.message,
+          cooldownEnd 
+        };
+      }
+    }
+  }
+  
+  // Check balance
+  const dailyBalance = await checkAndUpdateDailyBalance();
+  
+  if (dailyBalance.total <= 0) {
+    return { 
+      allowed: false, 
+      reason: "Insufficient balance. Earn more time by being productive!" 
+    };
+  }
+  
+  return { allowed: true };
+}
+
+// Log site access
+async function logSiteAccess(hostname: string) {
+  const result = await browser.storage.local.get("siteAccessLog");
+  const siteAccessLog: SiteAccessLog = result.siteAccessLog || {};
+  
+  siteAccessLog[hostname] = {
+    lastAccessed: Date.now(),
+    accessCount: (siteAccessLog[hostname]?.accessCount || 0) + 1
+  };
+  
+  await browser.storage.local.set({ siteAccessLog });
+}
+
+// Initialize daily balance
+checkAndUpdateDailyBalance();
+setInterval(checkAndUpdateDailyBalance, 60000); // Update every minute
 
 // Update daily history at midnight
 setInterval(updateDailyHistory, 60000); // Check every minute
@@ -220,6 +364,9 @@ async function updateDailyHistory() {
   }
   
   await browser.storage.local.set({ weeklyHistory });
+  
+  // Sync to Firebase after updating history
+  await syncToRemote();
 }
 
 // Initialize history on startup
@@ -259,6 +406,7 @@ browser.runtime.onMessage.addListener(async (message) => {
   
   if (message.type === "updateLimitedSites") {
     await browser.storage.local.set({ limitedSites: message.sites });
+    await syncToRemote();
     return { success: true };
   }
   
@@ -269,6 +417,7 @@ browser.runtime.onMessage.addListener(async (message) => {
   
   if (message.type === "updateProductiveSites") {
     await browser.storage.local.set({ productiveSites: message.sites });
+    await syncToRemote();
     return { success: true };
   }
   
@@ -280,6 +429,38 @@ browser.runtime.onMessage.addListener(async (message) => {
   if (message.type === "getWeeklyHistory") {
     const result = await browser.storage.local.get("weeklyHistory");
     return { weeklyHistory: result.weeklyHistory || {} };
+  }
+  
+  if (message.type === "manualSync") {
+    const result = await syncToRemote();
+    return result;
+  }
+  
+  if (message.type === "getSyncStatus") {
+    const { getSyncStatus } = await import("./services/syncService");
+    return getSyncStatus();
+  }
+  
+  if (message.type === "setAdminUserId") {
+    const { setAdminUserId } = await import("./services/syncService");
+    await browser.storage.local.set({ adminUserId: message.userId });
+    const result = await setAdminUserId(message.userId);
+    return result;
+  }
+  
+  if (message.type === "getDailyBalance") {
+    const balance = await checkAndUpdateDailyBalance();
+    return { balance };
+  }
+  
+  if (message.type === "canAccessSite") {
+    const result = await canAccessSite(message.hostname);
+    return result;
+  }
+  
+  if (message.type === "logSiteAccess") {
+    await logSiteAccess(message.hostname);
+    return { success: true };
   }
   
   if (message.action === "openPopup") {

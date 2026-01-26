@@ -57,6 +57,11 @@ export default function() {
   const [newProductiveSite, setNewProductiveSite] = useState("");
   const [showSettings, setShowSettings] = useState(false);
   const [settingsTab, setSettingsTab] = useState<'limited' | 'productive'>('limited');
+  const [syncing, setSyncing] = useState(false);
+  const [lastSyncTime, setLastSyncTime] = useState<number>(0);
+  const [showAdminInput, setShowAdminInput] = useState(false);
+  const [adminUserId, setAdminUserId] = useState("");
+  const [dailyBalance, setDailyBalance] = useState<any>(null);
 
   useEffect(() => {
     loadTimeData();
@@ -64,15 +69,33 @@ export default function() {
     loadProductiveSites();
     loadActiveLimits();
     loadWeeklyHistory();
+    loadDailyBalance();
+    
+    // Listen for sync completion
+    const handleMessage = (message: any) => {
+      if (message.type === "syncComplete") {
+        loadTimeData();
+        loadWeeklyHistory();
+        loadLimitedSites();
+        loadProductiveSites();
+        loadDailyBalance();
+      }
+    };
+    
+    browser.runtime.onMessage.addListener(handleMessage);
     
     // Refresh data every second
     const interval = setInterval(() => {
       loadTimeData();
       loadActiveLimits();
       loadWeeklyHistory();
+      loadDailyBalance();
     }, 1000);
     
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+      browser.runtime.onMessage.removeListener(handleMessage);
+    };
   }, []);
 
   async function loadTimeData() {
@@ -111,11 +134,63 @@ export default function() {
   async function loadWeeklyHistory() {
     const response = await browser.runtime.sendMessage({ type: "getWeeklyHistory" });
     setWeeklyHistory(response.weeklyHistory || {});
+    
+    // Also get last sync time
+    const result = await browser.storage.local.get("lastSync");
+    setLastSyncTime(result.lastSync || 0);
+  }
+
+  async function loadDailyBalance() {
+    const response = await browser.runtime.sendMessage({ type: "getDailyBalance" });
+    setDailyBalance(response.balance);
   }
 
   async function clearData() {
     await browser.storage.local.set({ timeTracking: {} });
     setTimeData([]);
+  }
+
+  async function handleManualSync() {
+    setSyncing(true);
+    try {
+      const response = await browser.runtime.sendMessage({ type: "manualSync" });
+      if (response.success) {
+        // Reload all data after successful sync
+        await Promise.all([
+          loadTimeData(),
+          loadWeeklyHistory(),
+          loadLimitedSites(),
+          loadProductiveSites(),
+        ]);
+      } else {
+        console.error("Sync failed:", response.error);
+      }
+    } catch (error) {
+      console.error("Sync error:", error);
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  async function handleSetAdminUserId() {
+    if (!adminUserId.trim()) return;
+    
+    try {
+      const response = await browser.runtime.sendMessage({ 
+        type: "setAdminUserId", 
+        userId: adminUserId.trim() 
+      });
+      
+      if (response.success) {
+        console.log("Admin user ID set:", response.userId);
+        setShowAdminInput(false);
+        setAdminUserId("");
+        // Trigger a sync
+        await handleManualSync();
+      }
+    } catch (error) {
+      console.error("Error setting admin user ID:", error);
+    }
   }
 
   async function addLimitedSite() {
@@ -162,6 +237,15 @@ export default function() {
   const productivePercentage = totalTime > 0 ? Math.round((productiveTime / totalTime) * 100) : 0;
   const distractingPercentage = totalTime > 0 ? Math.round((distractingTime / totalTime) * 100) : 0;
 
+  // Time Balance: Use daily balance from background if available
+  const BALANCE_RATIO = 0.5;
+  const earnedBalance = dailyBalance ? dailyBalance.earned : Math.floor(productiveTime * BALANCE_RATIO);
+  const bonusBalance = dailyBalance ? dailyBalance.bonus : 900; // 15 min default
+  const spentBalance = dailyBalance ? dailyBalance.spent : distractingTime;
+  const totalEarned = earnedBalance + bonusBalance;
+  const remainingBalance = dailyBalance ? Math.max(0, dailyBalance.total) : Math.max(0, totalEarned - spentBalance);
+  const balancePercentage = totalEarned > 0 ? Math.round((remainingBalance / totalEarned) * 100) : 0;
+
   // Get last 7 days for chart
   const getLast7Days = () => {
     const days = [];
@@ -190,7 +274,14 @@ export default function() {
   return (
     <div className="container">
       <div className="header">
-        <h1>Time Tracker</h1>
+        <div className="header-left">
+          <h1>Time Tracker</h1>
+          {lastSyncTime > 0 && (
+            <span className="sync-indicator" title={`Last synced: ${new Date(lastSyncTime).toLocaleString()}`}>
+              ●
+            </span>
+          )}
+        </div>
         <button onClick={() => setShowSettings(!showSettings)} className="settings-btn">
           {showSettings ? "Stats" : "Settings"}
         </button>
@@ -198,18 +289,40 @@ export default function() {
       
       {!showSettings ? (
         <>
-          <div className="stats-compact">
-            <div className="stat-row">
-              <span className="stat-label">Total</span>
+          <div className="stats-row">
+            <div className="stat-cell">
               <span className="stat-value">{formatTime(totalTime)}</span>
+              <span className="stat-label">Total</span>
             </div>
-            <div className="stat-row productive">
-              <span className="stat-label">Productive</span>
+            <div className="stat-cell productive">
               <span className="stat-value">{formatTime(productiveTime)}</span>
+              <span className="stat-label">Productive</span>
             </div>
-            <div className="stat-row distracting">
-              <span className="stat-label">Distracting</span>
+            <div className="stat-cell distracting">
               <span className="stat-value">{formatTime(distractingTime)}</span>
+              <span className="stat-label">Distracting</span>
+            </div>
+            <div className="stat-cell available">
+              <span className="stat-value">{formatTime(remainingBalance)}</span>
+              <span className="stat-label">Available</span>
+            </div>
+          </div>
+
+          <div className="productive-sites">
+            <h3>Productive Sites</h3>
+            <div className="productive-list">
+              {timeData
+                .filter(item => productiveSites.some(site => item.url.includes(site)))
+                .slice(0, 5)
+                .map((item) => (
+                  <div key={item.url} className="productive-site-item">
+                    <span className="productive-site-name">{item.url}</span>
+                    <span className="productive-site-time">{formatTime(item.timeSpent)}</span>
+                  </div>
+                ))}
+              {timeData.filter(item => productiveSites.some(site => item.url.includes(site))).length === 0 && (
+                <div className="empty-productive">No productive time tracked</div>
+              )}
             </div>
           </div>
 
@@ -284,8 +397,30 @@ export default function() {
           </div>
           
           <div className="footer">
+            <button onClick={handleManualSync} className="sync-btn" disabled={syncing}>
+              {syncing ? "Syncing..." : "Sync Now"}
+            </button>
+            <button onClick={() => setShowAdminInput(!showAdminInput)} className="admin-btn">
+              Admin
+            </button>
             <button onClick={clearData} className="clear-btn">Clear Data</button>
           </div>
+          
+          {showAdminInput && (
+            <div className="admin-panel">
+              <input
+                type="text"
+                placeholder="Enter admin user ID"
+                value={adminUserId}
+                onChange={(e) => setAdminUserId(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleSetAdminUserId()}
+                className="admin-input"
+              />
+              <button onClick={handleSetAdminUserId} className="admin-set-btn">
+                Set User ID
+              </button>
+            </div>
+          )}
         </>
       ) : (
         <div className="settings">

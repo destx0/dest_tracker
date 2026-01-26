@@ -1,5 +1,237 @@
 import browser from "webextension-polyfill";
 
+// Check if site access is allowed
+async function checkSiteAccess() {
+  const hostname = window.location.hostname;
+  const response = await browser.runtime.sendMessage({ 
+    type: "canAccessSite", 
+    hostname 
+  });
+  
+  if (!response.allowed) {
+    showBlockedPage(response.reason, response.cooldownEnd);
+    return false;
+  }
+  
+  // Log access for special sites
+  if (hostname.includes("amazon.in")) {
+    await browser.runtime.sendMessage({ 
+      type: "logSiteAccess", 
+      hostname: "amazon.in" 
+    });
+  }
+  
+  return true;
+}
+
+// Show blocked page
+function showBlockedPage(reason: string, cooldownEnd?: number) {
+  // Clear the page
+  document.body.innerHTML = "";
+  document.body.style.margin = "0";
+  document.body.style.padding = "0";
+  document.body.style.overflow = "hidden";
+  
+  const blockedPage = document.createElement("div");
+  blockedPage.id = "site-blocked-overlay";
+  
+  let cooldownMessage = "";
+  if (cooldownEnd) {
+    const remainingTime = Math.ceil((cooldownEnd - Date.now()) / (1000 * 60 * 60 * 24));
+    cooldownMessage = `<div class="cooldown-info">Available in ${remainingTime} day(s)</div>`;
+  }
+  
+  blockedPage.innerHTML = `
+    <div class="blocked-container">
+      <div class="blocked-icon">BLOCKED</div>
+      <h1 class="blocked-title">ACCESS_DENIED</h1>
+      <div class="blocked-reason">${reason}</div>
+      ${cooldownMessage}
+      
+      <div class="blocked-suggestion">
+        <div class="suggestion-title">Earn More Time</div>
+        <a href="https://neetcode.io" class="suggestion-link">
+          <span class="link-icon">→</span>
+          NeetCode.io
+        </a>
+      </div>
+      
+      <div class="blocked-footer">
+        <button class="back-btn" onclick="window.history.back()">Go Back</button>
+      </div>
+    </div>
+  `;
+  
+  const style = document.createElement("style");
+  style.textContent = `
+    @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@700;900&family=JetBrains+Mono:wght@400;600&display=swap');
+    
+    #site-blocked-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      background: linear-gradient(135deg, #0a0a0f 0%, #1a0a1f 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 999999;
+      font-family: 'JetBrains Mono', monospace;
+    }
+    
+    .blocked-container {
+      max-width: 600px;
+      padding: 48px;
+      background: #12121a;
+      border: 2px solid #ff3366;
+      box-shadow: 
+        0 0 30px rgba(255, 51, 102, 0.4),
+        0 0 60px rgba(255, 51, 102, 0.2),
+        inset 0 0 80px rgba(255, 51, 102, 0.05);
+      clip-path: polygon(
+        0 20px, 20px 0,
+        calc(100% - 20px) 0, 100% 20px,
+        100% calc(100% - 20px), calc(100% - 20px) 100%,
+        20px 100%, 0 calc(100% - 20px)
+      );
+      text-align: center;
+      animation: blockAppear 0.4s ease-out;
+    }
+    
+    @keyframes blockAppear {
+      0% { 
+        opacity: 0;
+        transform: scale(0.9) translateY(30px);
+      }
+      100% { 
+        opacity: 1;
+        transform: scale(1) translateY(0);
+      }
+    }
+    
+    .blocked-icon {
+      font-size: 18px;
+      font-weight: 900;
+      font-family: 'Orbitron', monospace;
+      color: #ff3366;
+      margin-bottom: 24px;
+      letter-spacing: 0.2em;
+    }
+    
+    .blocked-title {
+      font-family: 'Orbitron', monospace;
+      font-size: 42px;
+      font-weight: 900;
+      margin: 0 0 16px 0;
+      color: #ff3366;
+      text-transform: uppercase;
+      letter-spacing: 0.15em;
+      text-shadow: 
+        0 0 20px rgba(255, 51, 102, 1),
+        3px 0 0 rgba(0, 212, 255, 0.3),
+        -3px 0 0 rgba(255, 0, 255, 0.3);
+    }
+    
+    .blocked-reason {
+      font-size: 16px;
+      color: #e0e0e0;
+      margin-bottom: 24px;
+      line-height: 1.6;
+    }
+    
+    .cooldown-info {
+      font-size: 14px;
+      color: #ff9800;
+      background: rgba(255, 152, 0, 0.1);
+      padding: 12px 20px;
+      border: 1px solid #ff9800;
+      margin-bottom: 32px;
+      clip-path: polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 0 100%);
+    }
+    
+    .blocked-suggestion {
+      background: #1c1c2e;
+      padding: 24px;
+      border: 1px solid #00ff88;
+      margin-bottom: 32px;
+      clip-path: polygon(
+        0 0, calc(100% - 12px) 0, 100% 12px,
+        100% 100%, 12px 100%, 0 calc(100% - 12px)
+      );
+    }
+    
+    .suggestion-title {
+      font-size: 14px;
+      color: #00ff88;
+      font-weight: 700;
+      margin-bottom: 16px;
+      font-family: 'Orbitron', monospace;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+    }
+    
+    .suggestion-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 24px;
+      background: #00ff88;
+      color: #0a0a0f;
+      text-decoration: none;
+      font-weight: 700;
+      font-size: 14px;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      transition: all 200ms;
+      clip-path: polygon(
+        0 0, calc(100% - 8px) 0, 100% 8px,
+        100% 100%, 8px 100%, 0 calc(100% - 8px)
+      );
+      box-shadow: 0 0 20px rgba(0, 255, 136, 0.4);
+    }
+    
+    .suggestion-link:hover {
+      transform: translateY(-3px);
+      box-shadow: 
+        0 0 30px rgba(0, 255, 136, 0.8),
+        0 0 60px rgba(0, 255, 136, 0.4);
+      filter: brightness(1.1);
+    }
+    
+    .link-icon {
+      font-size: 16px;
+      font-weight: 900;
+    }
+    
+    .back-btn {
+      background: transparent;
+      color: #6b7280;
+      border: 1px solid #2a2a3a;
+      padding: 12px 24px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      cursor: pointer;
+      transition: all 150ms;
+      clip-path: polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 0 100%);
+    }
+    
+    .back-btn:hover {
+      border-color: #00ff88;
+      color: #00ff88;
+      box-shadow: 0 0 10px rgba(0, 255, 136, 0.3);
+    }
+  `;
+  
+  document.head.appendChild(style);
+  document.body.appendChild(blockedPage);
+}
+
+// Check on page load
+checkSiteAccess();
+
 // Check if this site needs a time limit
 async function checkTimeLimit() {
   const hostname = window.location.hostname;
