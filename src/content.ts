@@ -510,6 +510,7 @@ async function setTimeLimit(seconds: number) {
 function showCountdown(totalSeconds: number) {
   const countdown = document.createElement("div");
   countdown.id = "time-limit-countdown";
+  countdown.title = "Click to open Tab Time Tracker";
   countdown.innerHTML = `
     <div class="countdown-content">
       <span class="countdown-time"></span>
@@ -535,11 +536,16 @@ function showCountdown(totalSeconds: number) {
       border-radius: 3px;
       transition: all 200ms ease;
       opacity: 0.7;
+      cursor: pointer;
+      user-select: none;
     }
     
     #time-limit-countdown:hover {
       opacity: 1;
       border-color: rgba(0, 255, 136, 0.6);
+      cursor: pointer;
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
     }
     
     .countdown-content {
@@ -598,6 +604,11 @@ function showCountdown(totalSeconds: number) {
 
   document.head.appendChild(style);
   document.body.appendChild(countdown);
+
+  // Make countdown clickable to open popup
+  countdown.addEventListener("click", () => {
+    browser.runtime.sendMessage({ action: "openPopup" });
+  });
 
   const timeDisplay = countdown.querySelector(".countdown-time");
   const todayTimeDisplay = countdown.querySelector(".countdown-today");

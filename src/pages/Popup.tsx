@@ -19,17 +19,30 @@ interface ActiveLimits {
   [hostname: string]: TimeLimit;
 }
 
+interface DailyHistory {
+  date: string;
+  totalTime: number;
+  productiveTime: number;
+  distractingTime: number;
+}
+
+interface WeeklyHistory {
+  [date: string]: DailyHistory;
+}
+
 function formatTime(seconds: number): string {
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
   const secs = seconds % 60;
   
   if (hours > 0) {
-    return `${hours}h ${minutes}m ${secs}s`;
+    return `${hours}h ${minutes}m`;
   } else if (minutes > 0) {
-    return `${minutes}m ${secs}s`;
-  } else {
+    return `${minutes}m`;
+  } else if (seconds > 0) {
     return `${secs}s`;
+  } else {
+    return "0m";
   }
 }
 
@@ -39,6 +52,7 @@ export default function() {
   const [limitedSites, setLimitedSites] = useState<string[]>([]);
   const [productiveSites, setProductiveSites] = useState<string[]>([]);
   const [activeLimits, setActiveLimits] = useState<ActiveLimits>({});
+  const [weeklyHistory, setWeeklyHistory] = useState<WeeklyHistory>({});
   const [newSite, setNewSite] = useState("");
   const [newProductiveSite, setNewProductiveSite] = useState("");
   const [showSettings, setShowSettings] = useState(false);
@@ -49,11 +63,13 @@ export default function() {
     loadLimitedSites();
     loadProductiveSites();
     loadActiveLimits();
+    loadWeeklyHistory();
     
     // Refresh data every second
     const interval = setInterval(() => {
       loadTimeData();
       loadActiveLimits();
+      loadWeeklyHistory();
     }, 1000);
     
     return () => clearInterval(interval);
@@ -90,6 +106,11 @@ export default function() {
   async function loadActiveLimits() {
     const response = await browser.runtime.sendMessage({ type: "getActiveLimits" });
     setActiveLimits(response.activeLimits || {});
+  }
+
+  async function loadWeeklyHistory() {
+    const response = await browser.runtime.sendMessage({ type: "getWeeklyHistory" });
+    setWeeklyHistory(response.weeklyHistory || {});
   }
 
   async function clearData() {
@@ -141,6 +162,31 @@ export default function() {
   const productivePercentage = totalTime > 0 ? Math.round((productiveTime / totalTime) * 100) : 0;
   const distractingPercentage = totalTime > 0 ? Math.round((distractingTime / totalTime) * 100) : 0;
 
+  // Get last 7 days for chart
+  const getLast7Days = () => {
+    const days = [];
+    const today = new Date();
+    
+    for (let i = 6; i >= 0; i--) {
+      const date = new Date(today);
+      date.setDate(date.getDate() - i);
+      const dateStr = date.toISOString().split('T')[0];
+      const historyData = weeklyHistory[dateStr] || { totalTime: 0, productiveTime: 0, distractingTime: 0 };
+      days.push({
+        date: dateStr,
+        dayName: date.toLocaleDateString('en-US', { weekday: 'short' }),
+        totalTime: historyData.totalTime,
+        productiveTime: historyData.productiveTime,
+        distractingTime: historyData.distractingTime
+      });
+    }
+    
+    return days;
+  };
+
+  const last7Days = getLast7Days();
+  const maxTime = Math.max(...last7Days.map(d => d.totalTime), 1);
+
   return (
     <div className="container">
       <div className="header">
@@ -164,6 +210,36 @@ export default function() {
             <div className="stat-row distracting">
               <span className="stat-label">Distracting</span>
               <span className="stat-value">{formatTime(distractingTime)}</span>
+            </div>
+          </div>
+
+          <div className="weekly-history">
+            <h3>Weekly Usage</h3>
+            <div className="chart">
+              {last7Days.map((day, index) => {
+                const heightPercent = maxTime > 0 ? (day.totalTime / maxTime) * 100 : 0;
+                const productivePercent = day.totalTime > 0 ? (day.productiveTime / day.totalTime) * 100 : 0;
+                const distractingPercent = day.totalTime > 0 ? (day.distractingTime / day.totalTime) * 100 : 0;
+                
+                return (
+                  <div key={index} className="chart-bar-wrapper">
+                    <div className="chart-bar" style={{ height: `${Math.max(heightPercent, 2)}%` }}>
+                      <div 
+                        className="bar-segment productive" 
+                        style={{ height: `${productivePercent}%` }}
+                        title={`Productive: ${formatTime(day.productiveTime)}`}
+                      />
+                      <div 
+                        className="bar-segment distracting" 
+                        style={{ height: `${distractingPercent}%` }}
+                        title={`Distracting: ${formatTime(day.distractingTime)}`}
+                      />
+                    </div>
+                    <div className="chart-label">{day.dayName}</div>
+                    <div className="chart-time">{formatTime(day.totalTime)}</div>
+                  </div>
+                );
+              })}
             </div>
           </div>
 
