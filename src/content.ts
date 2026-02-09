@@ -25,7 +25,16 @@ async function checkSiteAccess() {
 }
 
 // Show blocked page
-function showBlockedPage(reason: string, cooldownEnd?: number) {
+async function showBlockedPage(reason: string, cooldownEnd?: number) {
+  // Get redirect sites from storage
+  const result = await browser.storage.local.get("redirectSites");
+  const redirectSites = result.redirectSites || [
+    { name: "NeetCode", url: "https://neetcode.io" }
+  ];
+  
+  // Pick a random redirect site
+  const randomSite = redirectSites[Math.floor(Math.random() * redirectSites.length)];
+  
   // Clear the page
   document.body.innerHTML = "";
   document.body.style.margin = "0";
@@ -50,9 +59,9 @@ function showBlockedPage(reason: string, cooldownEnd?: number) {
       
       <div class="blocked-suggestion">
         <div class="suggestion-title">Earn More Time</div>
-        <a href="https://neetcode.io" class="suggestion-link">
+        <a href="${randomSite.url}" class="suggestion-link">
           <span class="link-icon">→</span>
-          NeetCode.io
+          ${randomSite.name}
         </a>
       </div>
       
@@ -1076,3 +1085,336 @@ function showProductiveTimer() {
 }
 
 checkProductiveSite();
+
+// Listen for messages from background
+browser.runtime.onMessage.addListener((message) => {
+  console.log("Content script received message:", message);
+  if (message.type === "showProductiveTimeUpPopup") {
+    console.log("Showing productive time-up popup");
+    showProductiveTimeUpPopup();
+    return true; // Keep the message channel open for async response
+  }
+});
+
+// Show popup when time is up on productive sites
+async function showProductiveTimeUpPopup() {
+  // Remove any existing popup
+  const existing = document.getElementById("productive-time-up-overlay");
+  if (existing) {
+    existing.remove();
+  }
+
+  // Get redirect sites from storage
+  const result = await browser.storage.local.get("redirectSites");
+  const redirectSites = result.redirectSites || [
+    { name: "LeetCode", url: "https://leetcode.com" }
+  ];
+  
+  // Pick a random redirect site
+  const randomSite = redirectSites[Math.floor(Math.random() * redirectSites.length)];
+
+  const overlay = document.createElement("div");
+  overlay.id = "productive-time-up-overlay";
+  overlay.innerHTML = `
+    <div class="productive-popup">
+      <div class="popup-header">
+        <div class="popup-icon">✓</div>
+        <h2 class="popup-title">TIME_COMPLETE</h2>
+        <div class="popup-subtitle">// PRODUCTIVE_SESSION_ENDED</div>
+      </div>
+      
+      <div class="popup-body">
+        <div class="popup-message">
+          Your scheduled time on this productive site has ended.
+        </div>
+        
+        <div class="popup-encouragement">
+          <div class="encouragement-icon">⚡</div>
+          <div class="encouragement-text">
+            Great work! You've been productive.
+            <br>
+            Feel free to continue or take a break.
+          </div>
+        </div>
+        
+        <div class="popup-actions">
+          <button class="popup-btn continue-btn">Continue Working</button>
+          <button class="popup-btn break-btn">Visit ${randomSite.name}</button>
+        </div>
+      </div>
+      
+      <div class="popup-scanlines"></div>
+    </div>
+  `;
+
+  const style = document.createElement("style");
+  style.textContent = `
+    @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@700;900&family=JetBrains+Mono:wght@400;600&display=swap');
+    
+    #productive-time-up-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      background: rgba(10, 10, 15, 0.95);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 999999;
+      font-family: 'JetBrains Mono', monospace;
+      backdrop-filter: blur(8px);
+      animation: overlayFadeIn 0.3s ease-out;
+    }
+    
+    @keyframes overlayFadeIn {
+      0% { opacity: 0; }
+      100% { opacity: 1; }
+    }
+    
+    .productive-popup {
+      background: #12121a;
+      width: 480px;
+      max-width: 90vw;
+      border: 2px solid #00ff88;
+      box-shadow: 
+        0 0 30px rgba(0, 255, 136, 0.5),
+        0 0 60px rgba(0, 255, 136, 0.3),
+        inset 0 0 80px rgba(0, 255, 136, 0.05);
+      position: relative;
+      clip-path: polygon(
+        0 16px, 16px 0,
+        calc(100% - 16px) 0, 100% 16px,
+        100% calc(100% - 16px), calc(100% - 16px) 100%,
+        16px 100%, 0 calc(100% - 16px)
+      );
+      animation: popupSlideIn 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+    
+    @keyframes popupSlideIn {
+      0% { 
+        opacity: 0;
+        transform: scale(0.9) translateY(30px);
+      }
+      100% { 
+        opacity: 1;
+        transform: scale(1) translateY(0);
+      }
+    }
+    
+    .popup-header {
+      background: linear-gradient(180deg, #1c1c2e 0%, #12121a 100%);
+      padding: 24px 28px;
+      border-bottom: 1px solid #00ff88;
+      position: relative;
+      text-align: center;
+    }
+    
+    .popup-icon {
+      font-size: 48px;
+      color: #00ff88;
+      margin-bottom: 12px;
+      text-shadow: 0 0 20px rgba(0, 255, 136, 0.8);
+      animation: iconPulse 2s ease-in-out infinite;
+    }
+    
+    @keyframes iconPulse {
+      0%, 100% { 
+        transform: scale(1);
+        text-shadow: 0 0 20px rgba(0, 255, 136, 0.8);
+      }
+      50% { 
+        transform: scale(1.1);
+        text-shadow: 0 0 30px rgba(0, 255, 136, 1);
+      }
+    }
+    
+    .popup-title {
+      font-family: 'Orbitron', monospace;
+      font-size: 28px;
+      font-weight: 900;
+      margin: 0 0 8px 0;
+      color: #00ff88;
+      text-transform: uppercase;
+      letter-spacing: 0.15em;
+      text-shadow: 
+        0 0 15px rgba(0, 255, 136, 0.8),
+        2px 0 0 rgba(0, 212, 255, 0.3),
+        -2px 0 0 rgba(255, 0, 255, 0.3);
+    }
+    
+    .popup-subtitle {
+      font-size: 11px;
+      color: #6b7280;
+      text-transform: uppercase;
+      letter-spacing: 0.2em;
+      font-weight: 600;
+    }
+    
+    .popup-body {
+      padding: 32px 28px 28px;
+      background: #0a0a0f;
+      position: relative;
+    }
+    
+    .popup-message {
+      font-size: 15px;
+      color: #e0e0e0;
+      text-align: center;
+      margin-bottom: 24px;
+      line-height: 1.6;
+    }
+    
+    .popup-encouragement {
+      background: #1c1c2e;
+      padding: 20px;
+      border: 1px solid #00ff88;
+      margin-bottom: 28px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      clip-path: polygon(
+        0 0, calc(100% - 12px) 0, 100% 12px,
+        100% 100%, 12px 100%, 0 calc(100% - 12px)
+      );
+    }
+    
+    .encouragement-icon {
+      font-size: 32px;
+      flex-shrink: 0;
+      animation: iconGlow 2s ease-in-out infinite;
+    }
+    
+    @keyframes iconGlow {
+      0%, 100% { 
+        filter: drop-shadow(0 0 5px rgba(0, 255, 136, 0.5));
+      }
+      50% { 
+        filter: drop-shadow(0 0 15px rgba(0, 255, 136, 0.8));
+      }
+    }
+    
+    .encouragement-text {
+      font-size: 14px;
+      color: #00ff88;
+      line-height: 1.6;
+      font-weight: 600;
+    }
+    
+    .popup-actions {
+      display: flex;
+      gap: 12px;
+    }
+    
+    .popup-btn {
+      flex: 1;
+      padding: 14px 20px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      cursor: pointer;
+      transition: all 200ms cubic-bezier(0.4, 0, 0.2, 1);
+      border: none;
+      position: relative;
+      overflow: hidden;
+    }
+    
+    .continue-btn {
+      background: #00ff88;
+      color: #0a0a0f;
+      clip-path: polygon(
+        0 0, calc(100% - 10px) 0, 100% 10px,
+        100% 100%, 0 100%
+      );
+      box-shadow: 0 0 20px rgba(0, 255, 136, 0.4);
+    }
+    
+    .continue-btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 
+        0 0 30px rgba(0, 255, 136, 0.8),
+        0 0 60px rgba(0, 255, 136, 0.4);
+      filter: brightness(1.1);
+    }
+    
+    .break-btn {
+      background: transparent;
+      color: #6b7280;
+      border: 2px solid #2a2a3a;
+      clip-path: polygon(
+        0 0, calc(100% - 8px) 0, 100% 8px,
+        100% 100%, 0 100%
+      );
+    }
+    
+    .break-btn:hover {
+      border-color: #00ff88;
+      color: #00ff88;
+      box-shadow: 0 0 15px rgba(0, 255, 136, 0.3);
+    }
+    
+    .popup-btn:active {
+      transform: translateY(0);
+    }
+    
+    .popup-scanlines {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent 2px,
+        rgba(0, 0, 0, 0.3) 2px,
+        rgba(0, 0, 0, 0.3) 4px
+      );
+      pointer-events: none;
+      opacity: 0.2;
+    }
+    
+    .popup-body::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background-image:
+        linear-gradient(rgba(0, 255, 136, 0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0, 255, 136, 0.03) 1px, transparent 1px);
+      background-size: 20px 20px;
+      pointer-events: none;
+      opacity: 0.5;
+    }
+  `;
+
+  document.head.appendChild(style);
+  document.body.appendChild(overlay);
+
+  // Continue button - just close the popup
+  const continueBtn = overlay.querySelector(".continue-btn");
+  continueBtn?.addEventListener("click", () => {
+    overlay.remove();
+  });
+
+  // Break button - go back or close tab
+  const breakBtn = overlay.querySelector(".break-btn");
+  breakBtn?.addEventListener("click", () => {
+    overlay.remove();
+    // Redirect to the selected productive site
+    window.location.href = randomSite.url;
+  });
+
+  // ESC key to close
+  const handleEscape = (e: KeyboardEvent) => {
+    if (e.key === "Escape") {
+      overlay.remove();
+      document.removeEventListener("keydown", handleEscape);
+    }
+  };
+  document.addEventListener("keydown", handleEscape);
+}

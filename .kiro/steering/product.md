@@ -9,9 +9,13 @@
 - **Productivity Insights**: Categorizes sites as "productive" or "distracting" with visual statistics
 - **Active Countdown**: Shows remaining time for limited sites with color-coded warnings
 - **Persistent Storage**: Uses browser.storage.local to maintain tracking data across sessions
+- **Productive Sites Management**: Users can add productive sites (like LeetCode, GitHub, etc.) to a whitelist
+- **Gentle Reminders**: For productive sites, shows a popup reminder instead of closing tabs when time is up
 
 ## User Experience
 
 - Popup interface displays time statistics, site breakdown, and productivity metrics
 - Content script injects time limit prompts and countdown overlays on limited sites
 - Background service worker handles tab tracking, time updates, and automatic tab closure when limits expire
+- Settings panel allows managing both limited (distracting) and productive site lists
+- Productive sites show encouraging popups instead of forced closures when time limits are reached

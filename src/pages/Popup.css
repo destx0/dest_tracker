@@ -795,3 +795,101 @@ h1 {
   color: white;
   box-shadow: 0 0 10px rgba(255, 51, 102, 0.6);
 }
+
+/* ===== REDIRECT SETTINGS ===== */
+.redirect-description {
+  font-size: 10px;
+  color: var(--fg-muted);
+  text-align: center;
+  padding: 8px;
+  margin-bottom: 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  clip-path: polygon(0 0, calc(100% - 4px) 0, 100% 4px, 100% 100%, 0 100%);
+}
+
+.add-redirect {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.redirect-name-input,
+.redirect-url-input {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  color: var(--accent);
+  padding: 8px 10px;
+  border-radius: 0;
+  font-size: 11px;
+  font-family: 'JetBrains Mono', monospace;
+  clip-path: polygon(0 0, calc(100% - 4px) 0, 100% 4px, 100% 100%, 0 100%);
+}
+
+.redirect-name-input::placeholder,
+.redirect-url-input::placeholder {
+  color: var(--fg-muted);
+}
+
+.redirect-name-input:focus,
+.redirect-url-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--glow-sm);
+}
+
+.add-redirect button {
+  background: var(--accent);
+  color: var(--bg-void);
+  border: none;
+  padding: 8px 14px;
+  border-radius: 0;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 700;
+  font-family: 'Orbitron', monospace;
+  transition: all 150ms;
+  clip-path: polygon(0 0, calc(100% - 4px) 0, 100% 4px, 100% 100%, 0 100%);
+}
+
+.add-redirect button:hover {
+  box-shadow: var(--glow-lg);
+  filter: brightness(1.1);
+}
+
+.site-item.redirect {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 10px;
+}
+
+.site-item.redirect::before {
+  background: var(--accent-tertiary);
+  box-shadow: var(--glow-cyan);
+}
+
+.redirect-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  padding-left: 8px;
+}
+
+.redirect-name {
+  font-size: 11px;
+  color: var(--fg-primary);
+  font-weight: 600;
+}
+
+.redirect-url {
+  font-size: 9px;
+  color: var(--fg-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

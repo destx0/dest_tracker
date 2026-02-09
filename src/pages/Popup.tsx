@@ -51,12 +51,15 @@ export default function() {
   const [currentTab, setCurrentTab] = useState<string>("");
   const [limitedSites, setLimitedSites] = useState<string[]>([]);
   const [productiveSites, setProductiveSites] = useState<string[]>([]);
+  const [redirectSites, setRedirectSites] = useState<Array<{name: string, url: string}>>([]);
   const [activeLimits, setActiveLimits] = useState<ActiveLimits>({});
   const [weeklyHistory, setWeeklyHistory] = useState<WeeklyHistory>({});
   const [newSite, setNewSite] = useState("");
   const [newProductiveSite, setNewProductiveSite] = useState("");
+  const [newRedirectName, setNewRedirectName] = useState("");
+  const [newRedirectUrl, setNewRedirectUrl] = useState("");
   const [showSettings, setShowSettings] = useState(false);
-  const [settingsTab, setSettingsTab] = useState<'limited' | 'productive'>('limited');
+  const [settingsTab, setSettingsTab] = useState<'limited' | 'productive' | 'redirects'>('limited');
   const [syncing, setSyncing] = useState(false);
   const [lastSyncTime, setLastSyncTime] = useState<number>(0);
   const [showAdminInput, setShowAdminInput] = useState(false);
@@ -67,6 +70,7 @@ export default function() {
     loadTimeData();
     loadLimitedSites();
     loadProductiveSites();
+    loadRedirectSites();
     loadActiveLimits();
     loadWeeklyHistory();
     loadDailyBalance();
@@ -78,6 +82,7 @@ export default function() {
         loadWeeklyHistory();
         loadLimitedSites();
         loadProductiveSites();
+        loadRedirectSites();
         loadDailyBalance();
       }
     };
@@ -126,6 +131,11 @@ export default function() {
     setProductiveSites(response.productiveSites || []);
   }
 
+  async function loadRedirectSites() {
+    const response = await browser.runtime.sendMessage({ type: "getRedirectSites" });
+    setRedirectSites(response.redirectSites || []);
+  }
+
   async function loadActiveLimits() {
     const response = await browser.runtime.sendMessage({ type: "getActiveLimits" });
     setActiveLimits(response.activeLimits || {});
@@ -161,6 +171,7 @@ export default function() {
           loadWeeklyHistory(),
           loadLimitedSites(),
           loadProductiveSites(),
+          loadRedirectSites(),
         ]);
       } else {
         console.error("Sync failed:", response.error);
@@ -221,6 +232,22 @@ export default function() {
     const updated = productiveSites.filter(s => s !== site);
     await browser.runtime.sendMessage({ type: "updateProductiveSites", sites: updated });
     setProductiveSites(updated);
+  }
+
+  async function addRedirectSite() {
+    if (newRedirectName.trim() && newRedirectUrl.trim()) {
+      const updated = [...redirectSites, { name: newRedirectName.trim(), url: newRedirectUrl.trim() }];
+      await browser.runtime.sendMessage({ type: "updateRedirectSites", sites: updated });
+      setRedirectSites(updated);
+      setNewRedirectName("");
+      setNewRedirectUrl("");
+    }
+  }
+
+  async function removeRedirectSite(index: number) {
+    const updated = redirectSites.filter((_, i) => i !== index);
+    await browser.runtime.sendMessage({ type: "updateRedirectSites", sites: updated });
+    setRedirectSites(updated);
   }
 
   const totalTime = timeData.reduce((sum, item) => sum + item.timeSpent, 0);
@@ -437,6 +464,12 @@ export default function() {
             >
               Productive
             </button>
+            <button 
+              className={`settings-tab ${settingsTab === 'redirects' ? 'active' : ''}`}
+              onClick={() => setSettingsTab('redirects')}
+            >
+              Redirects
+            </button>
           </div>
 
           {settingsTab === 'limited' ? (
@@ -461,7 +494,7 @@ export default function() {
                 ))}
               </div>
             </>
-          ) : (
+          ) : settingsTab === 'productive' ? (
             <>
               <div className="add-site">
                 <input
@@ -479,6 +512,42 @@ export default function() {
                   <div key={site} className="site-item productive">
                     <span>{site}</span>
                     <button onClick={() => removeProductiveSite(site)} className="remove-btn">×</button>
+                  </div>
+                ))}
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="redirect-description">
+                Sites shown in blocked/time-up popups
+              </div>
+              <div className="add-redirect">
+                <input
+                  type="text"
+                  placeholder="Site Name (e.g., LeetCode)"
+                  value={newRedirectName}
+                  onChange={(e) => setNewRedirectName(e.target.value)}
+                  className="redirect-name-input"
+                />
+                <input
+                  type="text"
+                  placeholder="URL (e.g., https://leetcode.com)"
+                  value={newRedirectUrl}
+                  onChange={(e) => setNewRedirectUrl(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && addRedirectSite()}
+                  className="redirect-url-input"
+                />
+                <button onClick={addRedirectSite}>+</button>
+              </div>
+
+              <div className="sites-list">
+                {redirectSites.map((site, index) => (
+                  <div key={index} className="site-item redirect">
+                    <div className="redirect-info">
+                      <span className="redirect-name">{site.name}</span>
+                      <span className="redirect-url">{site.url}</span>
+                    </div>
+                    <button onClick={() => removeRedirectSite(index)} className="remove-btn">×</button>
                   </div>
                 ))}
               </div>

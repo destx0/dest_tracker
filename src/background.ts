@@ -87,6 +87,14 @@ const DEFAULT_PRODUCTIVE_SITES = [
   "medium.com"
 ];
 
+// Default redirect sites for blocked/time-up popups
+const DEFAULT_REDIRECT_SITES = [
+  { name: "LeetCode", url: "https://leetcode.com" },
+  { name: "NeetCode", url: "https://neetcode.io" },
+  { name: "GitHub", url: "https://github.com" },
+  { name: "Stack Overflow", url: "https://stackoverflow.com" }
+];
+
 // Load existing data
 async function loadData(): Promise<TimeTrackingData> {
   const result = await browser.storage.local.get("timeTracking");
@@ -166,6 +174,9 @@ browser.runtime.onStartup.addListener(async () => {
     startTime = Date.now();
   }
   
+  // Check if we need to reset data for a new day
+  await checkAndResetForNewDay();
+  
   // Initialize Firebase sync
   await initializeSync();
 });
@@ -179,13 +190,19 @@ browser.runtime.onInstalled.addListener(async () => {
   }
   
   // Set default limited sites if not already set
-  const result = await browser.storage.local.get(["limitedSites", "productiveSites"]);
+  const result = await browser.storage.local.get(["limitedSites", "productiveSites", "redirectSites"]);
   if (!result.limitedSites) {
     await browser.storage.local.set({ limitedSites: DEFAULT_LIMITED_SITES });
   }
   if (!result.productiveSites) {
     await browser.storage.local.set({ productiveSites: DEFAULT_PRODUCTIVE_SITES });
   }
+  if (!result.redirectSites) {
+    await browser.storage.local.set({ redirectSites: DEFAULT_REDIRECT_SITES });
+  }
+  
+  // Check if we need to reset data for a new day
+  await checkAndResetForNewDay();
   
   // Initialize Firebase sync
   await initializeSync();
@@ -300,9 +317,31 @@ async function logSiteAccess(hostname: string) {
   await browser.storage.local.set({ siteAccessLog });
 }
 
+// Check and reset for new day on startup
+async function checkAndResetForNewDay() {
+  const today = new Date().toISOString().split('T')[0];
+  const result = await browser.storage.local.get("lastHistoryUpdate");
+  const lastUpdate = result.lastHistoryUpdate;
+  
+  // If it's a new day, reset tracking data
+  if (lastUpdate && lastUpdate !== today) {
+    console.log(`New day detected! Resetting data from ${lastUpdate} to ${today}`);
+    await browser.storage.local.set({ 
+      timeTracking: {},
+      lastHistoryUpdate: today
+    });
+  } else if (!lastUpdate) {
+    // First time running, set the date
+    await browser.storage.local.set({ lastHistoryUpdate: today });
+  }
+}
+
 // Initialize daily balance
 checkAndUpdateDailyBalance();
 setInterval(checkAndUpdateDailyBalance, 60000); // Update every minute
+
+// Check for new day every minute
+setInterval(checkAndResetForNewDay, 60000);
 
 // Update daily history at midnight
 setInterval(updateDailyHistory, 60000); // Check every minute
@@ -375,24 +414,79 @@ updateDailyHistory();
 // Check time limits every second
 setInterval(checkTimeLimits, 1000);
 
+// Track which limits are being processed to prevent duplicate actions
+const processingLimits = new Set<string>();
+
 async function checkTimeLimits() {
-  const result = await browser.storage.local.get("activeLimits");
+  const result = await browser.storage.local.get(["activeLimits", "productiveSites"]);
   const activeLimits: ActiveLimits = result.activeLimits || {};
+  const productiveSites = result.productiveSites || DEFAULT_PRODUCTIVE_SITES;
   const now = Date.now();
   
   for (const [hostname, limit] of Object.entries(activeLimits)) {
+    // Skip if already processing this hostname
+    if (processingLimits.has(hostname)) {
+      continue;
+    }
+    
     if (now >= limit.endTime) {
-      // Time's up! Close all tabs with this hostname
-      const tabs = await browser.tabs.query({});
-      for (const tab of tabs) {
-        if (tab.url && tab.url.includes(hostname)) {
-          await browser.tabs.remove(tab.id!);
+      // Mark as processing
+      processingLimits.add(hostname);
+      
+      // Check if this is a productive site
+      const isProductive = productiveSites.some((site: string) => 
+        hostname.includes(site) || site.includes(hostname)
+      );
+      
+      if (isProductive) {
+        // For productive sites, send message to show popup instead of closing
+        const tabs = await browser.tabs.query({});
+        let messageSent = false;
+        
+        for (const tab of tabs) {
+          if (tab.url && tab.url.includes(hostname) && tab.id) {
+            try {
+              await browser.tabs.sendMessage(tab.id, { 
+                type: "showProductiveTimeUpPopup" 
+              });
+              messageSent = true;
+              console.log(`Sent productive time-up popup to tab ${tab.id} for ${hostname}`);
+            } catch (error) {
+              console.log(`Could not send message to tab ${tab.id}:`, error);
+            }
+          }
         }
+        
+        if (messageSent) {
+          // Remove the limit for productive sites after showing popup
+          delete activeLimits[hostname];
+          await browser.storage.local.set({ activeLimits });
+          console.log(`Removed time limit for productive site: ${hostname}`);
+        }
+      } else {
+        // For distracting sites, close all tabs with this hostname
+        const tabs = await browser.tabs.query({});
+        const tabsToClose = tabs.filter(tab => tab.url && tab.url.includes(hostname) && tab.id);
+        
+        for (const tab of tabsToClose) {
+          try {
+            await browser.tabs.remove(tab.id!);
+            console.log(`Closed distracting site tab ${tab.id} for ${hostname}`);
+          } catch (error) {
+            console.log(`Could not close tab ${tab.id}:`, error);
+          }
+        }
+        
+        // Remove the limit after closing tabs
+        delete activeLimits[hostname];
+        await browser.storage.local.set({ activeLimits });
+        console.log(`Removed time limit for distracting site: ${hostname}`);
       }
       
-      // Remove the limit
-      delete activeLimits[hostname];
-      await browser.storage.local.set({ activeLimits });
+      // Remove from processing set after a delay
+      setTimeout(() => {
+        processingLimits.delete(hostname);
+      }, 2000);
     }
   }
 }
@@ -417,6 +511,17 @@ browser.runtime.onMessage.addListener(async (message) => {
   
   if (message.type === "updateProductiveSites") {
     await browser.storage.local.set({ productiveSites: message.sites });
+    await syncToRemote();
+    return { success: true };
+  }
+  
+  if (message.type === "getRedirectSites") {
+    const result = await browser.storage.local.get("redirectSites");
+    return { redirectSites: result.redirectSites || DEFAULT_REDIRECT_SITES };
+  }
+  
+  if (message.type === "updateRedirectSites") {
+    await browser.storage.local.set({ redirectSites: message.sites });
     await syncToRemote();
     return { success: true };
   }
