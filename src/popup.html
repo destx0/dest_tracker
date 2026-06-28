@@ -4,20 +4,48 @@
     <meta charset="UTF-8" />
     <meta http-equiv="X-UA-Compatible" content="IE=edge" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
     <link rel="stylesheet" href="./popup.css" />
-    <title>CHRONO_OVERRIDE</title>
+    <title>Tab Time</title>
     <style>
+      :root {
+        --canvas: #07080a;
+        --surface: #0d0d0d;
+        --surface-elevated: #101111;
+        --surface-card: #121212;
+        --hairline: #242728;
+        --hairline-soft: rgba(255, 255, 255, 0.08);
+        --hairline-strong: rgba(255, 255, 255, 0.16);
+        --ink: #f4f4f6;
+        --body: #cdcdcd;
+        --mute: #9c9c9d;
+        --ash: #6a6b6c;
+        --stone: #434345;
+        --on-dark: #ffffff;
+        --on-dark-mute: rgba(255, 255, 255, 0.72);
+        --primary: #ffffff;
+        --primary-pressed: #e8e8e8;
+        --on-primary: #000000;
+        --accent-blue: #57c1ff;
+        --accent-red: #ff6161;
+        --accent-green: #59d499;
+        --accent-yellow: #ffc533;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; padding: 0; }
       body {
-        width: 300px;
-        min-height: 500px;
-        max-height: 600px;
-        margin: 0;
-        padding: 0;
-        overflow-x: hidden;
-        background: #0a0a0f;
+        width: 340px;
+        min-height: 440px;
+        background: var(--canvas);
+        color: var(--ink);
+        font-family: "Inter", "Inter Fallback", system-ui, sans-serif;
+        font-feature-settings: "calt", "kern", "liga", "ss03";
+        -webkit-font-smoothing: antialiased;
       }
     </style>
   </head>

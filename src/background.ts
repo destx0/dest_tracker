@@ -565,6 +565,24 @@ browser.runtime.onMessage.addListener(async (message) => {
     return { balance };
   }
   
+  if (message.type === "resetUsage") {
+    await browser.storage.local.set({
+      timeTracking: {},
+      dailyBalance: {
+        date: new Date().toISOString().split('T')[0],
+        earned: 0,
+        spent: 0,
+        bonus: DAILY_BONUS_SECONDS,
+        total: DAILY_BONUS_SECONDS
+      },
+      weeklyHistory: {},
+      activeLimits: {},
+      lastHistoryUpdate: new Date().toISOString().split('T')[0]
+    });
+    await syncToRemote();
+    return { success: true };
+  }
+
   if (message.type === "canAccessSite") {
     const result = await canAccessSite(message.hostname);
     return result;
