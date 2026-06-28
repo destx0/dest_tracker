@@ -67,6 +67,25 @@ function hostLabel(host: string): string {
   return host.replace(/^www\./, "");
 }
 
+// Single click opens modal; double click hides pill for 1 min.
+// A timer distinguishes the two so dblclick doesn't trigger the modal.
+function bindPillClicks(pill: HTMLElement) {
+  let clickTimer: number | null = null;
+  pill.addEventListener("click", () => {
+    if (clickTimer !== null) return; // wait for possible dblclick
+    clickTimer = window.setTimeout(() => {
+      clickTimer = null;
+      openManagementModal();
+    }, 250);
+  });
+  pill.addEventListener("dblclick", (e) => {
+    e.stopPropagation();
+    if (clickTimer !== null) { clearTimeout(clickTimer); clickTimer = null; }
+    pill.style.display = "none";
+    setTimeout(() => { pill.style.display = ""; }, 60000);
+  });
+}
+
 // ---------- Site access (blocked page) ----------
 async function checkSiteAccess() {
   const hostname = window.location.hostname;
@@ -559,24 +578,14 @@ function showCountdown(totalSeconds: number) {
   const pill = document.createElement("button");
   pill.id = "tt-countdown";
   pill.type = "button";
-  pill.title = "Click to adjust time limit · Double-click to hide for 1 min";
-  pill.innerHTML = `
-    <div class="tt-pill-row">
-      <span class="tt-pill-dot" aria-hidden="true"></span>
-      <span class="tt-pill-host"><span class="tt-pill-hostname"></span></span>
-    </div>
-    <div class="tt-pill-value">
-      <span class="tt-pill-time"></span>
-      <span class="tt-pill-sep">·</span>
-      <span class="tt-pill-today today"></span>
-    </div>
-  `;
+  pill.title = "Click to open Tab Time · Double-click to hide for 1 min";
+  pill.innerHTML = `<span class="tt-pill-time"></span>`;
 
   const style = document.createElement("style");
   style.textContent = `
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
     #tt-countdown {
-      position: fixed; top: 14px; right: 14px;
+      position: fixed; top: 12px; right: 12px;
       z-index: 999998;
       font-family: ${ttFont()};
       font-feature-settings: "calt","kern","liga","ss03";
@@ -585,59 +594,22 @@ function showCountdown(totalSeconds: number) {
       background: rgba(13,13,13,0.82);
       backdrop-filter: blur(14px);
       border: 1px solid var(--tt-hairline);
-      border-radius: 12px;
-      padding: 10px 12px;
-      display: flex; flex-direction: column; gap: 6px;
+      border-radius: 8px;
+      padding: 4px 9px;
       cursor: pointer;
-      min-width: 168px;
       text-align: left;
-      transition: background 180ms, border-color 180ms, transform 180ms;
+      transition: background 180ms, border-color 180ms;
       opacity: 0.9;
+      font-variant-numeric: tabular-nums;
+      font-size: 13px;
+      font-weight: 600;
+      line-height: 1;
+      letter-spacing: 0;
     }
     #tt-countdown:hover {
       opacity: 1;
       background: rgba(18,18,18,0.92);
       border-color: var(--tt-hairline-strong);
-      transform: translateY(-1px);
-    }
-    #tt-countdown .tt-pill-row {
-      display: flex; align-items: center; gap: 8px;
-    }
-    #tt-countdown .tt-pill-dot {
-      width: 7px; height: 7px; border-radius: 9999px;
-      background: var(--tt-accent-blue);
-      box-shadow: 0 0 0 2px rgba(87,193,255,0.15);
-    }
-    #tt-countdown.warning .tt-pill-dot {
-      background: var(--tt-accent-yellow);
-      box-shadow: 0 0 0 2px rgba(255,197,51,0.15);
-    }
-    #tt-countdown.danger .tt-pill-dot {
-      background: var(--tt-accent-red);
-      box-shadow: 0 0 0 2px rgba(255,97,97,0.18);
-    }
-    #tt-countdown .tt-pill-host {
-      font-size: 11px;
-      letter-spacing: 0.2px;
-      color: var(--tt-mute);
-      font-weight: 500;
-      max-width: 150px;
-      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    }
-    #tt-countdown .tt-pill-hostname { color: var(--tt-on-dark); }
-    #tt-countdown .tt-pill-value {
-      display: flex; align-items: baseline; gap: 6px;
-      font-variant-numeric: tabular-nums;
-    }
-    #tt-countdown .tt-pill-time {
-      font-size: 18px; font-weight: 600; line-height: 1;
-      color: var(--tt-ink);
-      letter-spacing: 0;
-    }
-    #tt-countdown .tt-pill-sep { color: var(--tt-stone, var(--tt-hairline)); }
-    #tt-countdown .tt-pill-today {
-      font-size: 11px; color: var(--tt-mute);
-      letter-spacing: 0.1px;
     }
     #tt-countdown.warning .tt-pill-time { color: var(--tt-accent-yellow); }
     #tt-countdown.danger .tt-pill-time { color: var(--tt-accent-red); }
@@ -646,30 +618,10 @@ function showCountdown(totalSeconds: number) {
   document.head.appendChild(style);
   document.body.appendChild(pill);
 
-  pill.addEventListener("click", () => openManagementModal());
-  pill.addEventListener("dblclick", (e) => {
-    e.stopPropagation();
-    pill.style.display = "none";
-    setTimeout(() => { pill.style.display = ""; }, 60000);
-  });
+  bindPillClicks(pill);
 
   const timeDisplay = pill.querySelector(".tt-pill-time") as HTMLElement;
-  const todayDisplay = pill.querySelector(".tt-pill-today") as HTMLElement;
-  const hostDisplay = pill.querySelector(".tt-pill-hostname") as HTMLElement;
   const hostname = window.location.hostname;
-  hostDisplay.textContent = hostLabel(hostname);
-
-  async function updateTodayTime() {
-    const result = await browser.storage.local.get("timeTracking");
-    const timeTracking = result.timeTracking || {};
-    const total = timeTracking[hostname]?.timeSpent || 0;
-    todayDisplay.textContent = shortTime(total);
-  }
-  updateTodayTime();
-  const todayInterval = setInterval(() => {
-    if (!document.body.contains(pill)) { clearInterval(todayInterval); return; }
-    updateTodayTime();
-  }, 5000);
 
   const initMin = Math.floor(totalSeconds / 60);
   const initSec = totalSeconds % 60;
@@ -822,12 +774,7 @@ async function showProductiveTimer() {
   document.head.appendChild(style);
   document.body.appendChild(pill);
 
-  pill.addEventListener("click", () => openManagementModal());
-  pill.addEventListener("dblclick", (e) => {
-    e.stopPropagation();
-    pill.style.display = "none";
-    setTimeout(() => { pill.style.display = ""; }, 60000);
-  });
+  bindPillClicks(pill);
 
   const sessionDisplay = pill.querySelector(".tt-pill-session") as HTMLElement;
   const earnedDisplay = pill.querySelector(".tt-pill-earned") as HTMLElement;
@@ -879,101 +826,6 @@ async function showProductiveTimer() {
 }
 
 checkProductiveSite();
-
-// ---------- Generic balance pill (entry point on any page) ----------
-function showBalancePill() {
-  ensureTokens();
-  if (document.getElementById("tt-countdown")) return;
-  if (document.getElementById("tt-productive")) return;
-  if (document.getElementById("tt-balance-pill")) return;
-  if (document.getElementById("tt-blocked-overlay")) return;
-
-  const pill = document.createElement("button");
-  pill.id = "tt-balance-pill";
-  pill.type = "button";
-  pill.title = "Click to open Tab Time · Double-click to hide for 1 min";
-  pill.innerHTML = `
-    <span class="tt-bal-dot" aria-hidden="true"></span>
-    <span class="tt-bal-label">Available</span>
-    <span class="tt-bal-value"></span>
-  `;
-
-  const style = document.createElement("style");
-  style.textContent = `
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
-    #tt-balance-pill {
-      position: fixed; top: 14px; right: 14px;
-      z-index: 999997;
-      font-family: ${ttFont()};
-      font-feature-settings: "calt","kern","liga","ss03";
-      -webkit-font-smoothing: antialiased;
-      color: var(--tt-ink);
-      background: rgba(13,13,13,0.82);
-      backdrop-filter: blur(14px);
-      border: 1px solid var(--tt-hairline);
-      border-radius: 9999px;
-      padding: 7px 12px;
-      display: inline-flex; align-items: center; gap: 8px;
-      cursor: pointer;
-      text-align: left;
-      transition: background 180ms, border-color 180ms, transform 180ms;
-      opacity: 0.9;
-    }
-    #tt-balance-pill:hover {
-      opacity: 1;
-      background: rgba(18,18,18,0.92);
-      border-color: var(--tt-hairline-strong);
-      transform: translateY(-1px);
-    }
-    #tt-balance-pill .tt-bal-dot {
-      width: 7px; height: 7px; border-radius: 9999px;
-      background: var(--tt-on-dark);
-      box-shadow: 0 0 0 2px rgba(255,255,255,0.08);
-    }
-    #tt-balance-pill .tt-bal-label {
-      font-size: 11px; color: var(--tt-mute);
-      letter-spacing: 0.1px;
-    }
-    #tt-balance-pill .tt-bal-value {
-      font-size: 13px; font-weight: 600; color: var(--tt-ink);
-      font-variant-numeric: tabular-nums;
-    }
-  `;
-  document.head.appendChild(style);
-  document.body.appendChild(pill);
-
-  pill.addEventListener("click", () => openManagementModal());
-  pill.addEventListener("dblclick", (e) => {
-    e.stopPropagation();
-    pill.style.display = "none";
-    setTimeout(() => { pill.style.display = ""; }, 60000);
-  });
-
-  const valueDisplay = pill.querySelector(".tt-bal-value") as HTMLElement;
-  async function refresh() {
-    try {
-      const r = await browser.runtime.sendMessage({ type: "getDailyBalance" });
-      const total = r.balance ? Math.max(0, r.balance.total) : 0;
-      valueDisplay.textContent = shortTime(total);
-    } catch {
-      valueDisplay.textContent = "—";
-    }
-  }
-  refresh();
-  const t = setInterval(() => {
-    if (!document.body.contains(pill)) { clearInterval(t); return; }
-    refresh();
-  }, 5000);
-}
-
-function ensureBalancePill() {
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", showBalancePill, { once: true });
-  } else {
-    showBalancePill();
-  }
-}
-ensureBalancePill();
 
 // ---------- Productive time-up popup (Raycast) ----------
 browser.runtime.onMessage.addListener((message) => {
@@ -1172,6 +1024,17 @@ function ensureModalStyle() {
     #tt-modal-overlay .ttm-bal-value { font-size: 30px; font-weight: 600; line-height: 1.1; font-variant-numeric: tabular-nums; }
     #tt-modal-overlay .ttm-bal-meta { font-size: 11px; color: var(--tt-mute); }
 
+    #tt-modal-overlay .ttm-limit-row {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 12px; background: var(--tt-surface-card);
+      border: 1px solid var(--tt-hairline); border-radius: 8px;
+      cursor: pointer; font-family: inherit; color: var(--tt-ink);
+      transition: background 150ms, border-color 150ms;
+    }
+    #tt-modal-overlay .ttm-limit-row:hover { border-color: var(--tt-hairline-strong); }
+    #tt-modal-overlay .ttm-limit-label { font-size: 12px; font-weight: 500; }
+    #tt-modal-overlay .ttm-limit-cta { font-size: 11px; color: var(--tt-mute); letter-spacing: 0.2px; }
+
     #tt-modal-overlay .ttm-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
     #tt-modal-overlay .ttm-stat {
       display: flex; flex-direction: column; gap: 4px;
@@ -1295,7 +1158,6 @@ async function openManagementModal() {
       <div class="ttm-body"></div>
       <div class="ttm-foot">
         <button class="ttm-btn danger ttm-reset">Reset</button>
-        <button class="ttm-btn primary ttm-sync">Sync</button>
       </div>
     </div>
   `;
@@ -1311,15 +1173,17 @@ async function openManagementModal() {
   let tab: "limited" | "productive" | "redirects" = "limited";
 
   async function fetchAll() {
-    const [td, ls, ps, rs, wh, db, sync] = await Promise.all([
+    const [td, ls, ps, rs, wh, db, al] = await Promise.all([
       browser.storage.local.get("timeTracking"),
       browser.runtime.sendMessage({ type: "getLimitedSites" }),
       browser.runtime.sendMessage({ type: "getProductiveSites" }),
       browser.runtime.sendMessage({ type: "getRedirectSites" }),
       browser.runtime.sendMessage({ type: "getWeeklyHistory" }),
       browser.runtime.sendMessage({ type: "getDailyBalance" }),
-      browser.storage.local.get("lastSync"),
+      browser.storage.local.get("activeLimits"),
     ]);
+    const hostname = window.location.hostname;
+    const limit = (al.activeLimits || {})[hostname];
     return {
       timeData: Object.values(td.timeTracking || {}) as { url: string; title: string; timeSpent: number }[],
       limited: ls.limitedSites || [],
@@ -1327,7 +1191,7 @@ async function openManagementModal() {
       redirects: rs.redirectSites || [],
       weekly: wh.weeklyHistory || {},
       balance: db.balance,
-      lastSync: sync.lastSync || 0,
+      activeLimit: limit ? Math.max(0, Math.ceil((limit.endTime - Date.now()) / 1000)) : 0,
     };
   }
 
@@ -1418,6 +1282,7 @@ async function openManagementModal() {
         <span class="ttm-bal-value">${shortTime(b.remaining)}</span>
         <span class="ttm-bal-meta">${shortTime(b.totalEarned)} earned</span>
       </div>
+      ${d.activeLimit > 0 ? `<button class="ttm-limit-row"><span class="ttm-limit-label">Limit · ${shortTime(d.activeLimit)}</span><span class="ttm-limit-cta">Adjust</span></button>` : ""}
       <div class="ttm-stats">
         <div class="ttm-stat productive"><span class="ttm-stat-label">Productive</span><span class="ttm-stat-value">${shortTime(b.prodTime)}</span></div>
         <div class="ttm-stat distracting"><span class="ttm-stat-label">Distracting</span><span class="ttm-stat-value">${shortTime(b.distTime)}</span></div>
@@ -1459,6 +1324,15 @@ async function openManagementModal() {
         paint();
       });
     });
+
+    const limitRow = body.querySelector(".ttm-limit-row") as HTMLElement | null;
+    if (limitRow) {
+      limitRow.addEventListener("click", () => {
+        overlay.remove();
+        document.removeEventListener("keydown", escHandler);
+        showTimeLimitPrompt();
+      });
+    }
 
     const addBtn = body.querySelector(".ttm-site-add") as HTMLElement | null;
     const siteInput = body.querySelector(".ttm-site-input") as HTMLInputElement | null;
@@ -1516,19 +1390,8 @@ async function openManagementModal() {
     });
   }
 
-  const syncBtn = overlay.querySelector(".ttm-sync") as HTMLButtonElement;
   const resetBtn = overlay.querySelector(".ttm-reset") as HTMLButtonElement;
-  let syncing = false;
   let resetArmed = false;
-  syncBtn.addEventListener("click", async () => {
-    if (syncing) return;
-    syncing = true;
-    syncBtn.textContent = "Syncing…";
-    syncBtn.disabled = true;
-    try { await browser.runtime.sendMessage({ type: "manualSync" }); } finally {
-      syncing = false; syncBtn.textContent = "Sync"; syncBtn.disabled = false; paint();
-    }
-  });
   function armReset() {
     resetArmed = true;
     resetBtn.textContent = "Confirm?";

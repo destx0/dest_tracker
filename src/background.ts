@@ -1,5 +1,4 @@
 import browser from "webextension-polyfill";
-import { initializeSync, syncToRemote } from "./services/syncService";
 
 interface TabTimeData {
   url: string;
@@ -177,12 +176,7 @@ browser.runtime.onStartup.addListener(async () => {
     currentTabId = tabs[0].id || null;
     startTime = Date.now();
   }
-  
-  // Check if we need to reset data for a new day
   await handleDayTransition();
-  
-  // Initialize Firebase sync
-  await initializeSync();
 });
 
 // Initialize on install
@@ -192,8 +186,7 @@ browser.runtime.onInstalled.addListener(async () => {
     currentTabId = tabs[0].id || null;
     startTime = Date.now();
   }
-  
-  // Set default limited sites if not already set
+
   const result = await browser.storage.local.get(["limitedSites", "productiveSites", "redirectSites"]);
   if (!result.limitedSites) {
     await browser.storage.local.set({ limitedSites: DEFAULT_LIMITED_SITES });
@@ -204,19 +197,12 @@ browser.runtime.onInstalled.addListener(async () => {
   if (!result.redirectSites) {
     await browser.storage.local.set({ redirectSites: DEFAULT_REDIRECT_SITES });
   }
-  
-  // Check if we need to reset data for a new day
+
   await handleDayTransition();
-  
-  // Initialize Firebase sync
-  await initializeSync();
 });
 
 // Update time periodically (every 10 seconds)
 setInterval(updateCurrentTabTime, 10000);
-
-// Sync to Firebase every 30 seconds
-setInterval(syncToRemote, 30000);
 
 // Check balance and update daily bonus
 async function checkAndUpdateDailyBalance() {
@@ -401,8 +387,6 @@ async function handleDayTransition() {
     if (hasCleaned) {
       await browser.storage.local.set({ weeklyHistory: cleaned });
     }
-
-    await syncToRemote();
   } finally {
     isHandlingDayTransition = false;
   }
@@ -507,64 +491,44 @@ browser.runtime.onMessage.addListener(async (message) => {
   
   if (message.type === "updateLimitedSites") {
     await browser.storage.local.set({ limitedSites: message.sites });
-    await syncToRemote();
     return { success: true };
   }
-  
+
   if (message.type === "getProductiveSites") {
     const result = await browser.storage.local.get("productiveSites");
     return { productiveSites: result.productiveSites || DEFAULT_PRODUCTIVE_SITES };
   }
-  
+
   if (message.type === "updateProductiveSites") {
     await browser.storage.local.set({ productiveSites: message.sites });
-    await syncToRemote();
     return { success: true };
   }
-  
+
   if (message.type === "getRedirectSites") {
     const result = await browser.storage.local.get("redirectSites");
     return { redirectSites: result.redirectSites || DEFAULT_REDIRECT_SITES };
   }
-  
+
   if (message.type === "updateRedirectSites") {
     await browser.storage.local.set({ redirectSites: message.sites });
-    await syncToRemote();
     return { success: true };
   }
-  
+
   if (message.type === "getActiveLimits") {
     const result = await browser.storage.local.get("activeLimits");
     return { activeLimits: result.activeLimits || {} };
   }
-  
+
   if (message.type === "getWeeklyHistory") {
     const result = await browser.storage.local.get("weeklyHistory");
     return { weeklyHistory: result.weeklyHistory || {} };
   }
-  
-  if (message.type === "manualSync") {
-    const result = await syncToRemote();
-    return result;
-  }
-  
-  if (message.type === "getSyncStatus") {
-    const { getSyncStatus } = await import("./services/syncService");
-    return getSyncStatus();
-  }
-  
-  if (message.type === "setAdminUserId") {
-    const { setAdminUserId } = await import("./services/syncService");
-    await browser.storage.local.set({ adminUserId: message.userId });
-    const result = await setAdminUserId(message.userId);
-    return result;
-  }
-  
+
   if (message.type === "getDailyBalance") {
     const balance = await checkAndUpdateDailyBalance();
     return { balance };
   }
-  
+
   if (message.type === "resetUsage") {
     await browser.storage.local.set({
       timeTracking: {},
@@ -579,7 +543,6 @@ browser.runtime.onMessage.addListener(async (message) => {
       activeLimits: {},
       lastHistoryUpdate: new Date().toISOString().split('T')[0]
     });
-    await syncToRemote();
     return { success: true };
   }
 
@@ -590,25 +553,6 @@ browser.runtime.onMessage.addListener(async (message) => {
   
   if (message.type === "logSiteAccess") {
     await logSiteAccess(message.hostname);
-    return { success: true };
-  }
-  
-  if (message.action === "openPopup") {
-    // Try to open the popup (works in Firefox, limited in Chrome)
-    try {
-      // @ts-ignore - openPopup may not be available in all browsers
-      if (browser.action && browser.action.openPopup) {
-        // @ts-ignore
-        await browser.action.openPopup();
-      } else if (browser.browserAction && browser.browserAction.openPopup) {
-        // @ts-ignore - for older API
-        await browser.browserAction.openPopup();
-      }
-    } catch (error) {
-      console.log("Could not open popup programmatically:", error);
-      // Fallback: In Chrome, we can't open popup from content script
-      // The user will need to click the extension icon manually
-    }
     return { success: true };
   }
 });
