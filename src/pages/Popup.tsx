@@ -12,7 +12,6 @@ interface TabTimeData {
 interface TimeLimit {
   endTime: number;
   seconds: number;
-  startTime: number;
 }
 
 interface ActiveLimits {
@@ -89,13 +88,13 @@ export default function() {
     
     browser.runtime.onMessage.addListener(handleMessage);
     
-    // Refresh data every second
+    // Refresh data every 5 seconds
     const interval = setInterval(() => {
       loadTimeData();
       loadActiveLimits();
       loadWeeklyHistory();
       loadDailyBalance();
-    }, 1000);
+    }, 5000);
     
     return () => {
       clearInterval(interval);

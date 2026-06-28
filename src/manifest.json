@@ -18,6 +18,11 @@
     "default_popup": "src/popup.html"
   },
   "permissions": ["tabs", "storage"],
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "tab-time-tracker@dest_tracker.local"
+    }
+  },
   "{{chrome}}.background": {
     "service_worker": "src/background.ts"
   },

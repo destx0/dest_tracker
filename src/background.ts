@@ -15,7 +15,6 @@ interface TimeTrackingData {
 interface TimeLimit {
   endTime: number;
   seconds: number;
-  startTime: number;
 }
 
 interface ActiveLimits {
@@ -75,6 +74,10 @@ const SPECIAL_BLOCKED_SITES = {
 const DAILY_BONUS_SECONDS = 900; // 15 minutes
 const BALANCE_RATIO = 0.5; // 1 min productive = 0.5 min distracting
 
+function isHostnameMatch(hostname: string, sitePattern: string): boolean {
+  return hostname === sitePattern || hostname.endsWith('.' + sitePattern);
+}
+
 // Default productive sites
 const DEFAULT_PRODUCTIVE_SITES = [
   "github.com",
@@ -111,13 +114,16 @@ async function updateCurrentTabTime() {
   if (currentTabId === null) return;
 
   const now = Date.now();
-  const timeSpent = Math.floor((now - startTime) / 1000);
-  
+  const capturedStart = startTime;
+  startTime = now;
+
+  const timeSpent = Math.floor((now - capturedStart) / 1000);
+
   if (timeSpent > 0) {
     const data = await loadData();
     const tab = await browser.tabs.get(currentTabId);
     const url = new URL(tab.url || "").hostname || tab.url || "unknown";
-    
+
     if (!data[url]) {
       data[url] = {
         url,
@@ -126,15 +132,13 @@ async function updateCurrentTabTime() {
         lastActive: now
       };
     }
-    
+
     data[url].timeSpent += timeSpent;
     data[url].lastActive = now;
     data[url].title = tab.title || data[url].title;
-    
+
     await saveData(data);
   }
-  
-  startTime = now;
 }
 
 // Track active tab changes
@@ -175,7 +179,7 @@ browser.runtime.onStartup.addListener(async () => {
   }
   
   // Check if we need to reset data for a new day
-  await checkAndResetForNewDay();
+  await handleDayTransition();
   
   // Initialize Firebase sync
   await initializeSync();
@@ -202,7 +206,7 @@ browser.runtime.onInstalled.addListener(async () => {
   }
   
   // Check if we need to reset data for a new day
-  await checkAndResetForNewDay();
+  await handleDayTransition();
   
   // Initialize Firebase sync
   await initializeSync();
@@ -218,7 +222,7 @@ setInterval(syncToRemote, 30000);
 async function checkAndUpdateDailyBalance() {
   const today = new Date().toISOString().split('T')[0];
   const result = await browser.storage.local.get(["dailyBalance", "timeTracking", "productiveSites", "limitedSites"]);
-  
+
   const dailyBalance: DailyBalance = result.dailyBalance || {
     date: today,
     earned: 0,
@@ -226,37 +230,39 @@ async function checkAndUpdateDailyBalance() {
     bonus: DAILY_BONUS_SECONDS,
     total: DAILY_BONUS_SECONDS
   };
-  
-  // Reset if new day
+
+  // Reset if new day — skip recalculation to avoid using stale timeTracking
   if (dailyBalance.date !== today) {
     dailyBalance.date = today;
     dailyBalance.earned = 0;
     dailyBalance.spent = 0;
     dailyBalance.bonus = DAILY_BONUS_SECONDS;
     dailyBalance.total = DAILY_BONUS_SECONDS;
+    await browser.storage.local.set({ dailyBalance });
+    return dailyBalance;
   }
-  
+
   // Calculate earned and spent from today's tracking
   const timeTracking = result.timeTracking || {};
   const productiveSites = result.productiveSites || DEFAULT_PRODUCTIVE_SITES;
   const limitedSites = result.limitedSites || DEFAULT_LIMITED_SITES;
-  
+
   let productiveTime = 0;
   let distractingTime = 0;
-  
+
   for (const item of Object.values(timeTracking) as TabTimeData[]) {
-    if (productiveSites.some((site: string) => item.url.includes(site))) {
+    if (productiveSites.some((site: string) => isHostnameMatch(item.url, site))) {
       productiveTime += item.timeSpent;
     }
-    if (limitedSites.some((site: string) => item.url.includes(site))) {
+    if (limitedSites.some((site: string) => isHostnameMatch(item.url, site))) {
       distractingTime += item.timeSpent;
     }
   }
-  
+
   dailyBalance.earned = Math.floor(productiveTime * BALANCE_RATIO);
   dailyBalance.spent = distractingTime;
   dailyBalance.total = dailyBalance.bonus + dailyBalance.earned - dailyBalance.spent;
-  
+
   await browser.storage.local.set({ dailyBalance });
   return dailyBalance;
 }
@@ -268,7 +274,7 @@ async function canAccessSite(hostname: string): Promise<{ allowed: boolean; reas
   const limitedSites = result.limitedSites || DEFAULT_LIMITED_SITES;
   
   // Check if it's a limited site
-  const isLimited = limitedSites.some((site: string) => hostname.includes(site) || site.includes(hostname));
+  const isLimited = limitedSites.some((site: string) => isHostnameMatch(hostname, site));
   
   if (!isLimited) {
     return { allowed: true };
@@ -276,7 +282,7 @@ async function canAccessSite(hostname: string): Promise<{ allowed: boolean; reas
   
   // Check special blocked sites (like Amazon)
   for (const [blockedSite, config] of Object.entries(SPECIAL_BLOCKED_SITES)) {
-    if (hostname.includes(blockedSite)) {
+    if (isHostnameMatch(hostname, blockedSite)) {
       const lastAccess = siteAccessLog[blockedSite]?.lastAccessed || 0;
       const cooldownMs = config.cooldownDays * 24 * 60 * 60 * 1000;
       const cooldownEnd = lastAccess + cooldownMs;
@@ -317,99 +323,100 @@ async function logSiteAccess(hostname: string) {
   await browser.storage.local.set({ siteAccessLog });
 }
 
-// Check and reset for new day on startup
-async function checkAndResetForNewDay() {
-  const today = new Date().toISOString().split('T')[0];
-  const result = await browser.storage.local.get("lastHistoryUpdate");
-  const lastUpdate = result.lastHistoryUpdate;
-  
-  // If it's a new day, reset tracking data
-  if (lastUpdate && lastUpdate !== today) {
-    console.log(`New day detected! Resetting data from ${lastUpdate} to ${today}`);
-    await browser.storage.local.set({ 
-      timeTracking: {},
-      lastHistoryUpdate: today
-    });
-  } else if (!lastUpdate) {
-    // First time running, set the date
-    await browser.storage.local.set({ lastHistoryUpdate: today });
+// Consolidated day transition: archive old day, then reset tracking and update today
+let isHandlingDayTransition = false;
+
+async function handleDayTransition() {
+  if (isHandlingDayTransition) return;
+  isHandlingDayTransition = true;
+
+  try {
+    const now = new Date();
+    const today = now.toISOString().split('T')[0];
+    const result = await browser.storage.local.get([
+      "weeklyHistory", "limitedSites", "productiveSites", "lastHistoryUpdate", "timeTracking"
+    ]);
+
+    const timeTracking = result.timeTracking || {};
+    const weeklyHistory: WeeklyHistory = result.weeklyHistory || {};
+    const limitedSites = result.limitedSites || DEFAULT_LIMITED_SITES;
+    const productiveSites = result.productiveSites || DEFAULT_PRODUCTIVE_SITES;
+    const lastUpdate = result.lastHistoryUpdate;
+
+    let totalTime = 0;
+    let productiveTime = 0;
+    let distractingTime = 0;
+
+    for (const item of Object.values(timeTracking) as TabTimeData[]) {
+      totalTime += item.timeSpent;
+      if (productiveSites.some((site: string) => isHostnameMatch(item.url, site))) {
+        productiveTime += item.timeSpent;
+      }
+      if (limitedSites.some((site: string) => isHostnameMatch(item.url, site))) {
+        distractingTime += item.timeSpent;
+      }
+    }
+
+    if (lastUpdate && lastUpdate !== today) {
+      // New day: archive previous day's stats before resetting
+      weeklyHistory[lastUpdate] = {
+        date: lastUpdate,
+        totalTime,
+        productiveTime,
+        distractingTime
+      };
+
+      await browser.storage.local.set({
+        timeTracking: {},
+        lastHistoryUpdate: today,
+        weeklyHistory
+      });
+    } else {
+      // Same day: update today's entry without resetting
+      if (!lastUpdate) {
+        await browser.storage.local.set({ lastHistoryUpdate: today });
+      }
+
+      weeklyHistory[today] = {
+        date: today,
+        totalTime,
+        productiveTime,
+        distractingTime
+      };
+
+      await browser.storage.local.set({ weeklyHistory });
+    }
+
+    // Clean up old entries (keep only last 30 days)
+    const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    const cutoffDate = thirtyDaysAgo.toISOString().split('T')[0];
+    const cleaned = { ...weeklyHistory };
+    let hasCleaned = false;
+    for (const date in cleaned) {
+      if (date < cutoffDate) {
+        delete cleaned[date];
+        hasCleaned = true;
+      }
+    }
+    if (hasCleaned) {
+      await browser.storage.local.set({ weeklyHistory: cleaned });
+    }
+
+    await syncToRemote();
+  } finally {
+    isHandlingDayTransition = false;
   }
 }
 
 // Initialize daily balance
 checkAndUpdateDailyBalance();
-setInterval(checkAndUpdateDailyBalance, 60000); // Update every minute
+setInterval(checkAndUpdateDailyBalance, 60000);
 
-// Check for new day every minute
-setInterval(checkAndResetForNewDay, 60000);
-
-// Update daily history at midnight
-setInterval(updateDailyHistory, 60000); // Check every minute
-
-async function updateDailyHistory() {
-  const now = new Date();
-  const today = now.toISOString().split('T')[0]; // YYYY-MM-DD
-  
-  // Get current tracking data
-  const timeData = await loadData();
-  const result = await browser.storage.local.get(["weeklyHistory", "limitedSites", "productiveSites", "lastHistoryUpdate"]);
-  
-  const weeklyHistory: WeeklyHistory = result.weeklyHistory || {};
-  const limitedSites = result.limitedSites || DEFAULT_LIMITED_SITES;
-  const productiveSites = result.productiveSites || DEFAULT_PRODUCTIVE_SITES;
-  const lastUpdate = result.lastHistoryUpdate || today;
-  
-  // Calculate today's stats
-  let totalTime = 0;
-  let productiveTime = 0;
-  let distractingTime = 0;
-  
-  for (const item of Object.values(timeData)) {
-    totalTime += item.timeSpent;
-    
-    if (productiveSites.some((site: string) => item.url.includes(site))) {
-      productiveTime += item.timeSpent;
-    }
-    
-    if (limitedSites.some((site: string) => item.url.includes(site))) {
-      distractingTime += item.timeSpent;
-    }
-  }
-  
-  // Update today's entry
-  weeklyHistory[today] = {
-    date: today,
-    totalTime,
-    productiveTime,
-    distractingTime
-  };
-  
-  // Clean up old entries (keep only last 30 days)
-  const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-  const cutoffDate = thirtyDaysAgo.toISOString().split('T')[0];
-  
-  for (const date in weeklyHistory) {
-    if (date < cutoffDate) {
-      delete weeklyHistory[date];
-    }
-  }
-  
-  // If it's a new day, reset today's tracking
-  if (lastUpdate !== today) {
-    await browser.storage.local.set({ 
-      timeTracking: {},
-      lastHistoryUpdate: today
-    });
-  }
-  
-  await browser.storage.local.set({ weeklyHistory });
-  
-  // Sync to Firebase after updating history
-  await syncToRemote();
-}
+// Handle day transition every minute
+setInterval(handleDayTransition, 60000);
 
 // Initialize history on startup
-updateDailyHistory();
+handleDayTransition();
 
 // Check time limits every second
 setInterval(checkTimeLimits, 1000);
@@ -435,7 +442,7 @@ async function checkTimeLimits() {
       
       // Check if this is a productive site
       const isProductive = productiveSites.some((site: string) => 
-        hostname.includes(site) || site.includes(hostname)
+        isHostnameMatch(hostname, site)
       );
       
       if (isProductive) {

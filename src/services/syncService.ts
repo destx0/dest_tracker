@@ -43,6 +43,15 @@ export async function setAdminUserId(adminId: string) {
 
 // Initialize Firebase Auth
 export async function initializeSync() {
+  if (!db || !auth) {
+    console.log("Firebase not configured, skipping sync");
+    userId = "local";
+    return;
+  }
+
+  const firestore = db;
+  const fireAuth = auth;
+
   // If already initializing, return the existing promise
   if (initPromise) {
     return initPromise;
@@ -60,7 +69,7 @@ export async function initializeSync() {
   isInitializing = true;
 
   initPromise = new Promise<void>((resolve) => {
-    const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
+    const unsubscribeAuth = onAuthStateChanged(fireAuth, async (user) => {
       if (user) {
         userId = user.uid;
         console.log("User authenticated:", userId);
@@ -71,7 +80,7 @@ export async function initializeSync() {
       } else {
         // Try to sign in anonymously, fallback to default user ID
         try {
-          const userCredential = await signInAnonymously(auth);
+          const userCredential = await signInAnonymously(fireAuth);
           userId = userCredential.user.uid;
           console.log("User signed in anonymously:", userId);
           await startSync();
@@ -108,10 +117,11 @@ export async function initializeSync() {
 
 // Start syncing data
 async function startSync() {
-  if (!userId) return;
+  if (!userId || !db) return;
+  const firestore = db;
 
   // Check if document exists, if not create it with current local data
-  const userDocRef = doc(db, "users", userId);
+  const userDocRef = doc(firestore, "users", userId);
   const docSnap = await getDoc(userDocRef);
 
   if (!docSnap.exists()) {
@@ -168,6 +178,13 @@ async function startSync() {
 
 // Sync local data to Firebase
 export async function syncToRemote() {
+  if (!db || !auth) {
+    console.log("Firebase not configured, skipping syncToRemote");
+    return { success: false, error: "Firebase not initialized" };
+  }
+
+  const firestore = db;
+
   // Wait for initialization if in progress
   if (isInitializing && initPromise) {
     await initPromise;
@@ -193,7 +210,7 @@ export async function syncToRemote() {
       "productiveSites",
     ]);
 
-    const userDocRef = doc(db, "users", userId);
+    const userDocRef = doc(firestore, "users", userId);
 
     await setDoc(
       userDocRef,

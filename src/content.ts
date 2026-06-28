@@ -1,27 +1,40 @@
 import browser from "webextension-polyfill";
 
+console.log("[TabTimeTracker] Content script loaded on", window.location.hostname);
+
+function isHostnameMatch(hostname: string, sitePattern: string): boolean {
+  return hostname === sitePattern || hostname.endsWith('.' + sitePattern);
+}
+
 // Check if site access is allowed
 async function checkSiteAccess() {
   const hostname = window.location.hostname;
-  const response = await browser.runtime.sendMessage({ 
-    type: "canAccessSite", 
-    hostname 
-  });
-  
-  if (!response.allowed) {
-    showBlockedPage(response.reason, response.cooldownEnd);
-    return false;
-  }
-  
-  // Log access for special sites
-  if (hostname.includes("amazon.in")) {
-    await browser.runtime.sendMessage({ 
-      type: "logSiteAccess", 
-      hostname: "amazon.in" 
+  try {
+    const response = await browser.runtime.sendMessage({ 
+      type: "canAccessSite", 
+      hostname 
     });
+
+    console.log("[TabTimeTracker] checkSiteAccess for", hostname, response);
+
+    if (!response.allowed) {
+      showBlockedPage(response.reason, response.cooldownEnd);
+      return false;
+    }
+
+    // Log access for special sites
+    if (isHostnameMatch(hostname, "amazon.in")) {
+      await browser.runtime.sendMessage({ 
+        type: "logSiteAccess", 
+        hostname: "amazon.in" 
+      });
+    }
+
+    return true;
+  } catch (err) {
+    console.error("[TabTimeTracker] checkSiteAccess failed:", err);
+    return true;
   }
-  
-  return true;
 }
 
 // Show blocked page
@@ -244,18 +257,72 @@ checkSiteAccess();
 // Check if this site needs a time limit
 async function checkTimeLimit() {
   const hostname = window.location.hostname;
-  const result = await browser.storage.local.get(["limitedSites", "activeLimits"]);
-  const limitedSites = result.limitedSites || [];
+
+  let accessResponse;
+  try {
+    accessResponse = await browser.runtime.sendMessage({
+      type: "canAccessSite",
+      hostname
+    });
+  } catch (err) {
+    console.error("[TabTimeTracker] canAccessSite failed:", err);
+    return;
+  }
+
+  console.log("[TabTimeTracker] checkTimeLimit for", hostname, accessResponse);
+
+  if (accessResponse.cooldownEnd) {
+    return;
+  }
+
+  if (!accessResponse.allowed) {
+    return;
+  }
+
+  const limitedResponse = await browser.runtime.sendMessage({ type: "getLimitedSites" });
+  const limitedSites = limitedResponse.limitedSites || [];
+  const result = await browser.storage.local.get("activeLimits");
   const activeLimits = result.activeLimits || {};
 
-  // Check if this site is in the limited list
-  const isLimited = limitedSites.some((site: string) => 
-    hostname.includes(site) || site.includes(hostname)
+  console.log("[TabTimeTracker] limitedSites from background:", JSON.stringify(limitedSites));
+  console.log("[TabTimeTracker] checking hostname:", hostname);
+
+  const isLimited = limitedSites.some((site: string) =>
+    isHostnameMatch(hostname, site)
   );
 
-  if (isLimited && !activeLimits[hostname]) {
-    showTimeLimitPrompt();
+  console.log("[TabTimeTracker] isLimited:", isLimited, "hasActiveLimit:", !!activeLimits[hostname]);
+
+  if (!isLimited || activeLimits[hostname]) {
+    return;
   }
+
+  let remainingBalance = 0;
+  try {
+    const balanceResponse = await browser.runtime.sendMessage({ type: "getDailyBalance" });
+    remainingBalance = balanceResponse.balance?.total || 0;
+  } catch (err) {
+    console.error("[TabTimeTracker] getDailyBalance failed:", err);
+    remainingBalance = 300; // fallback to 5 min if balance check fails
+  }
+
+  console.log("[TabTimeTracker] remainingBalance:", remainingBalance);
+
+  if (remainingBalance <= 0) {
+    return;
+  }
+
+  const defaultSeconds = Math.min(remainingBalance, 300);
+  console.log("[TabTimeTracker] auto-setting timer:", defaultSeconds, "seconds");
+
+  const endTime = Date.now() + defaultSeconds * 1000;
+  activeLimits[hostname] = {
+    endTime,
+    seconds: defaultSeconds
+  };
+  await browser.storage.local.set({ activeLimits });
+
+  showCountdown(defaultSeconds);
 }
 
 function showTimeLimitPrompt() {
@@ -739,8 +806,7 @@ async function setTimeLimit(seconds: number) {
   const activeLimits = result.activeLimits || {};
   activeLimits[hostname] = {
     endTime,
-    seconds,
-    startTime: Date.now()
+    seconds
   };
   await browser.storage.local.set({ activeLimits });
 
@@ -749,9 +815,15 @@ async function setTimeLimit(seconds: number) {
 }
 
 function showCountdown(totalSeconds: number) {
+  // Remove any existing countdown
+  const existing = document.getElementById("time-limit-countdown");
+  if (existing) {
+    existing.remove();
+  }
+
   const countdown = document.createElement("div");
   countdown.id = "time-limit-countdown";
-  countdown.title = "Click to open Tab Time Tracker";
+  countdown.title = "Click to adjust time limit";
   countdown.innerHTML = `
     <div class="countdown-content">
       <span class="countdown-time"></span>
@@ -846,9 +918,9 @@ function showCountdown(totalSeconds: number) {
   document.head.appendChild(style);
   document.body.appendChild(countdown);
 
-  // Make countdown clickable to open popup
+  // Make countdown clickable to adjust time limit
   countdown.addEventListener("click", () => {
-    browser.runtime.sendMessage({ action: "openPopup" });
+    showTimeLimitPrompt();
   });
 
   // Double-click to hide for 1 minute
@@ -862,28 +934,27 @@ function showCountdown(totalSeconds: number) {
 
   const timeDisplay = countdown.querySelector(".countdown-time");
   const todayTimeDisplay = countdown.querySelector(".countdown-today");
-  let remaining = totalSeconds;
+  const hostname = window.location.hostname;
 
   // Function to get today's total time for this site
   async function updateTodayTime() {
-    const hostname = window.location.hostname;
     const result = await browser.storage.local.get("timeTracking");
     const timeTracking = result.timeTracking || {};
-    
+
     if (timeTracking[hostname]) {
-      const totalSeconds = timeTracking[hostname].timeSpent;
-      const hours = Math.floor(totalSeconds / 3600);
-      const minutes = Math.floor((totalSeconds % 3600) / 60);
-      
+      const totalSecs = timeTracking[hostname].timeSpent;
+      const hours = Math.floor(totalSecs / 3600);
+      const minutes = Math.floor((totalSecs % 3600) / 60);
+
       let timeStr = "";
       if (hours > 0) {
         timeStr = `${hours}h${minutes}m`;
       } else if (minutes > 0) {
         timeStr = `${minutes}m`;
       } else {
-        timeStr = `${totalSeconds}s`;
+        timeStr = `${totalSecs}s`;
       }
-      
+
       if (todayTimeDisplay) {
         todayTimeDisplay.textContent = timeStr;
       }
@@ -896,15 +967,36 @@ function showCountdown(totalSeconds: number) {
 
   // Update today's time initially and every 5 seconds
   updateTodayTime();
-  setInterval(updateTodayTime, 5000);
+  const todayInterval = setInterval(() => {
+    if (!document.body.contains(countdown)) {
+      clearInterval(todayInterval);
+      return;
+    }
+    updateTodayTime();
+  }, 5000);
 
-  const interval = setInterval(() => {
-    remaining--;
-    
+  const tickInterval = setInterval(async () => {
+    if (!document.body.contains(countdown)) {
+      clearInterval(tickInterval);
+      return;
+    }
+
+    // Read endTime from storage for accurate countdown
+    const result = await browser.storage.local.get("activeLimits");
+    const activeLimits = result.activeLimits || {};
+    const limit = activeLimits[hostname];
+
+    if (!limit) {
+      clearInterval(tickInterval);
+      return;
+    }
+
+    const remaining = Math.max(0, Math.ceil((limit.endTime - Date.now()) / 1000));
+
     const minutes = Math.floor(remaining / 60);
     const seconds = remaining % 60;
     const timeStr = `${minutes}:${seconds.toString().padStart(2, '0')}`;
-    
+
     if (timeDisplay) {
       timeDisplay.textContent = timeStr;
     }
@@ -917,15 +1009,15 @@ function showCountdown(totalSeconds: number) {
     }
 
     if (remaining <= 0) {
-      clearInterval(interval);
+      clearInterval(tickInterval);
     }
   }, 1000);
 
   // Initial display
-  const minutes = Math.floor(remaining / 60);
-  const seconds = remaining % 60;
+  const initMinutes = Math.floor(totalSeconds / 60);
+  const initSeconds = totalSeconds % 60;
   if (timeDisplay) {
-    timeDisplay.textContent = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+    timeDisplay.textContent = `${initMinutes}:${initSeconds.toString().padStart(2, '0')}`;
   }
 }
 
@@ -957,7 +1049,7 @@ async function checkProductiveSite() {
   const productiveSites = result.productiveSites || [];
   
   const isProductive = productiveSites.some((site: string) => 
-    hostname.includes(site) || site.includes(hostname)
+    isHostnameMatch(hostname, site)
   );
   
   if (isProductive) {
@@ -965,7 +1057,7 @@ async function checkProductiveSite() {
   }
 }
 
-function showProductiveTimer() {
+async function showProductiveTimer() {
   const timer = document.createElement("div");
   timer.id = "productive-timer";
   timer.innerHTML = `
@@ -1050,34 +1142,36 @@ function showProductiveTimer() {
   const timeDisplay = timer.querySelector(".timer-time");
   let elapsed = 0;
 
-  // Get initial time from storage
   async function getInitialTime() {
     const hostname = window.location.hostname;
     const result = await browser.storage.local.get("timeTracking");
     const timeTracking = result.timeTracking || {};
-    
+
     if (timeTracking[hostname]) {
       elapsed = timeTracking[hostname].timeSpent;
     }
   }
 
-  getInitialTime();
+  await getInitialTime();
 
-  // Update timer every second
-  setInterval(() => {
+  const productiveInterval = setInterval(() => {
+    if (!document.body.contains(timer)) {
+      clearInterval(productiveInterval);
+      return;
+    }
     elapsed++;
-    
+
     const hours = Math.floor(elapsed / 3600);
     const minutes = Math.floor((elapsed % 3600) / 60);
     const seconds = elapsed % 60;
-    
+
     let timeStr = "";
     if (hours > 0) {
       timeStr = `${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
     } else {
       timeStr = `${minutes}:${seconds.toString().padStart(2, '0')}`;
     }
-    
+
     if (timeDisplay) {
       timeDisplay.textContent = timeStr;
     }
